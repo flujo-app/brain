@@ -28,6 +28,8 @@ interface ChatMessage {
   content: string | null;
   tool_calls?: ToolCall[];
   tool_call_id?: string;
+  /** FLUJO routing: the node a user turn should resume execution at. */
+  processNodeId?: string;
 }
 
 interface CompletionResponse {
@@ -483,13 +485,31 @@ export class AiDock {
     }
   }
 
+  /** Where a follow-up turn resumes: the node that answered last, falling
+   *  back to the brain-stem's (first) process node. */
+  private resumeNodeId(): string | undefined {
+    for (let i = this.messages.length - 1; i >= 0; i--) {
+      const m = this.messages[i];
+      if (m.role === 'assistant' && m.processNodeId) return m.processNodeId;
+    }
+    return this.stem?.inner.nodes.find((n) => n.type === 'process')?.id;
+  }
+
   /** One user turn: completion + as many tool rounds as the model asks for. */
   private async turn(text: string): Promise<void> {
     const base = flujoBase();
     const target = this.stem;
     if (!base || !target) throw new Error('FLUJO is not reachable');
 
-    this.messages.push({ role: 'user', content: text });
+    // FLUJO parks a finished conversation on its Finish node; a follow-up
+    // user message must point execution back at a thinking node or the
+    // resumed run completes instantly with a bare "Processing complete."
+    // (Mirrors FLUJO's own chat UI, which tags every follow-up this way.)
+    this.messages.push({
+      role: 'user',
+      content: text,
+      ...(this.conversationId ? { processNodeId: this.resumeNodeId() } : {}),
+    });
 
     const tools = this.enabledTools();
     const nameToFlow = new Map<string, Neuron>();
