@@ -428,6 +428,86 @@ let wizOpen = false;
 let ollamaTags: string[] | null = null;
 let existingModels: Array<{ id: string; name: string; displayName?: string }> | null = null;
 
+// Model search: the provider's official catalog, fetched live via the manager.
+interface CatalogModel {
+  id: string;
+  name?: string;
+}
+let modelQuery = '';
+/** Which provider+key the fetched catalog belongs to (remote providers). */
+let catalogFor: string | null = null;
+let catalogModels: CatalogModel[] | 'loading' | 'error' = 'loading';
+/** Ollama library search results (debounced, seq guards stale responses). */
+let libraryHits: CatalogModel[] | 'loading' | 'error' | null = null;
+let librarySeq = 0;
+
+/** Fetch the provider's full model list once per provider+key; search filters it locally. */
+function ensureCatalog(): void {
+  if (wiz.where !== 'remote' || !wiz.provider) return;
+  const want = `${wiz.provider}:${wiz.apiKey}`;
+  if (catalogFor === want) return;
+  catalogFor = want;
+  catalogModels = 'loading';
+  void api<{ models: CatalogModel[] }>('/provider-models', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ provider: wiz.provider, apiKey: wiz.apiKey }),
+  })
+    .then((r) => {
+      if (catalogFor !== want) return;
+      catalogModels = r.models;
+      refreshModelLists();
+    })
+    .catch(() => {
+      if (catalogFor !== want) return;
+      catalogModels = 'error';
+      refreshModelLists();
+    });
+}
+
+/** Debounced search of the Ollama library (models available to pull). */
+function searchLibrary(q: string): void {
+  const seq = ++librarySeq;
+  if (!q) {
+    libraryHits = null;
+    return;
+  }
+  libraryHits = 'loading';
+  window.setTimeout(() => {
+    if (seq !== librarySeq) return;
+    void api<{ models: CatalogModel[] }>(`/ollama/library?q=${encodeURIComponent(q)}`)
+      .then((r) => {
+        if (seq !== librarySeq) return;
+        libraryHits = r.models;
+        refreshModelLists();
+      })
+      .catch(() => {
+        if (seq !== librarySeq) return;
+        libraryHits = 'error';
+        refreshModelLists();
+      });
+  }, 300);
+}
+
+/** Case-insensitive match: every word of the query must appear in id or
+ *  display name ("gemini flash" finds google/gemini-2.5-flash); models whose
+ *  id/name starts with the query rank first. */
+function rankHits(models: CatalogModel[], q: string): CatalogModel[] {
+  const lq = q.toLowerCase();
+  const words = lq.split(/\s+/).filter(Boolean);
+  return models
+    .flatMap((m) => {
+      const id = m.id.toLowerCase();
+      const name = (m.name ?? '').toLowerCase();
+      const hay = `${id} ${name}`;
+      if (!words.every((w) => hay.includes(w))) return [];
+      return [{ m, score: id.startsWith(lq) || name.startsWith(lq) ? 0 : 1 }];
+    })
+    .sort((a, b) => a.score - b.score || a.m.id.localeCompare(b.m.id))
+    .slice(0, 8)
+    .map((x) => x.m);
+}
+
 const overlay = $('wizard-overlay');
 const wizard = $('wizard');
 
@@ -503,6 +583,91 @@ function choiceHtml(opts: { key: string; icon: string; color?: string; title: st
   </button>`;
 }
 
+/** The model step below the search box: curated picks, or live hits while searching. */
+function modelListsHtml(prov: Provider): string {
+  const q = modelQuery.trim();
+  if (q) return hitlistHtml(prov, q);
+
+  const installed =
+    prov.id === OLLAMA.id && ollamaTags?.length
+      ? `<p class="wiz-group">${esc(t(wiz.where === 'network' ? 'wiz.model.installedNet' : 'wiz.model.installed'))}</p>
+         <div class="wiz-choices">
+           ${ollamaTags
+             .slice(0, 6)
+             .map((tag) => choiceHtml({ key: `m:${tag}`, icon: '💾', title: tag, sub: '' }))
+             .join('')}
+         </div>
+         <p class="wiz-group"></p>`
+      : '';
+  const curated = prov.models
+    .filter((m) => !(prov.id === OLLAMA.id && ollamaTags?.includes(m.id)))
+    .map((m) =>
+      choiceHtml({
+        key: `m:${m.id}`,
+        icon: '✨',
+        title: m.label,
+        sub: t(`tier.${m.tier}`),
+        badge: m.recommended ? t('tier.recommended') : undefined,
+      }),
+    )
+    .join('');
+  const custom = wiz.customModel
+    ? `<input id="wiz-custom-model" autocomplete="off" placeholder="${esc(t('wiz.model.customPh'))}" value="${esc(wiz.model ?? '')}" />`
+    : choiceHtml({ key: 'custom', icon: '⌨️', title: t('wiz.model.custom'), sub: t('wiz.model.customPh') });
+  return `${installed}
+    <div class="wiz-choices">${curated}${wiz.customModel ? '' : custom}</div>
+    ${wiz.customModel ? custom : ''}`;
+}
+
+/** Live search results: installed tags + Ollama library, or the provider catalog. */
+function hitlistHtml(prov: Provider, q: string): string {
+  let items = '';
+  let note = '';
+  if (prov.id === OLLAMA.id) {
+    items = (ollamaTags ?? [])
+      .filter((tag) => tag.toLowerCase().includes(q.toLowerCase()))
+      .slice(0, 4)
+      .map((tag) => choiceHtml({ key: `m:${tag}`, icon: '💾', title: tag, sub: '' }))
+      .join('');
+    if (libraryHits === 'loading') note = t('wiz.model.loading');
+    else if (libraryHits === 'error') note = t('wiz.model.liveFail');
+    else
+      items += (libraryHits ?? [])
+        .map((m) => choiceHtml({ key: `m:${m.id}`, icon: '📦', title: m.id, sub: t('wiz.model.library') }))
+        .join('');
+  } else if (catalogModels === 'loading') {
+    note = t('wiz.model.loading');
+  } else if (catalogModels === 'error') {
+    note = t('wiz.model.liveFail');
+  } else {
+    const hits = rankHits(catalogModels, q);
+    items = hits
+      .map((m) =>
+        choiceHtml({
+          key: `m:${m.id}`,
+          icon: '✨',
+          title: m.name && m.name !== m.id ? m.name : m.id,
+          sub: m.name && m.name !== m.id ? m.id : '',
+        }),
+      )
+      .join('');
+    if (!hits.length) note = t('wiz.model.noHits');
+  }
+  // Whatever happens, the typed id itself stays selectable.
+  const useTyped = choiceHtml({ key: `use:${q}`, icon: '⌨️', title: t('wiz.model.useTyped', { q }), sub: t('wiz.model.useTypedSub') });
+  return `<div class="wiz-choices">${items}${useTyped}</div>${note ? `<p class="wiz-safe">${esc(note)}</p>` : ''}`;
+}
+
+/** Re-render only the model lists (keeps focus in the search box) and rewire. */
+function refreshModelLists(): void {
+  if (!wizOpen || wizStep !== 'model' || !wiz.provider) return;
+  const div = wizard.querySelector<HTMLDivElement>('#wiz-model-lists');
+  if (!div) return;
+  div.innerHTML = modelListsHtml(providerById(wiz.provider));
+  wireChoices(div);
+  wireCustomModel();
+}
+
 function stepBodyHtml(): string {
   switch (wizStep) {
     case 'where':
@@ -560,37 +725,13 @@ function stepBodyHtml(): string {
 
     case 'model': {
       const prov = providerById(wiz.provider!);
-      const installed =
-        prov.id === OLLAMA.id && ollamaTags?.length
-          ? `<p class="wiz-group">${esc(t(wiz.where === 'network' ? 'wiz.model.installedNet' : 'wiz.model.installed'))}</p>
-             <div class="wiz-choices">
-               ${ollamaTags
-                 .slice(0, 6)
-                 .map((tag) => choiceHtml({ key: `m:${tag}`, icon: '💾', title: tag, sub: '' }))
-                 .join('')}
-             </div>
-             <p class="wiz-group"></p>`
-          : '';
-      const curated = prov.models
-        .filter((m) => !(prov.id === OLLAMA.id && ollamaTags?.includes(m.id)))
-        .map((m) =>
-          choiceHtml({
-            key: `m:${m.id}`,
-            icon: '✨',
-            title: m.label,
-            sub: t(`tier.${m.tier}`),
-            badge: m.recommended ? t('tier.recommended') : undefined,
-          }),
-        )
-        .join('');
-      const custom = wiz.customModel
-        ? `<input id="wiz-custom-model" autocomplete="off" placeholder="${esc(t('wiz.model.customPh'))}" value="${esc(wiz.model ?? '')}" />`
-        : choiceHtml({ key: 'custom', icon: '⌨️', title: t('wiz.model.custom'), sub: t('wiz.model.customPh') });
+      const searchPh =
+        prov.id === OLLAMA.id ? t('wiz.model.searchPhOllama') : t('wiz.model.searchPh', { provider: prov.name });
       const note = prov.id === OLLAMA.id ? `<p class="wiz-safe">${esc(t('wiz.model.pullNote'))}</p>` : '';
       return `<h3>${esc(t('wiz.model.title'))}</h3>
-        ${installed}
-        <div class="wiz-choices">${curated}${wiz.customModel ? '' : custom}</div>
-        ${wiz.customModel ? custom : ''}
+        <input id="wiz-model-search" class="wiz-search" type="search" autocomplete="off" spellcheck="false"
+          placeholder="${esc(searchPh)}" value="${esc(modelQuery)}" />
+        <div id="wiz-model-lists">${modelListsHtml(prov)}</div>
         ${note}`;
     }
 
@@ -652,49 +793,102 @@ function renderWizard(): void {
   wireWizard();
 }
 
+function wireChoices(root: ParentNode): void {
+  root.querySelectorAll<HTMLButtonElement>('.wiz-choice').forEach((btn) => {
+    btn.addEventListener('click', () => handleChoice(btn.dataset.key!));
+  });
+}
+
+function handleChoice(key: string): void {
+  if (wizStep === 'where') {
+    wiz.where = key as 'local' | 'network' | 'remote';
+    wiz.provider = wiz.where === 'remote' ? null : OLLAMA.id;
+    wiz.model = null;
+    wiz.customModel = false;
+    ollamaTags = null;
+    modelQuery = '';
+    libraryHits = null;
+    librarySeq++;
+    if (wiz.where === 'local' && ollamaAvailable) {
+      // Prefetch installed tags so the model step can offer them.
+      void api<{ models?: Array<{ name: string }> }>('/ollama/tags')
+        .then((r) => {
+          ollamaTags = (r.models ?? []).map((m) => m.name);
+          if (wizOpen && wizStep === 'model') renderWizard();
+        })
+        .catch(() => {
+          ollamaTags = null;
+        });
+    }
+    goNext();
+  } else if (wizStep === 'provider') {
+    wiz.provider = key;
+    wiz.model = null;
+    wiz.customModel = false;
+    modelQuery = '';
+    goNext();
+  } else if (wizStep === 'model') {
+    if (key === 'custom') {
+      wiz.customModel = true;
+      renderWizard();
+      wizard.querySelector<HTMLInputElement>('#wiz-custom-model')?.focus();
+    } else if (key.startsWith('use:')) {
+      wiz.model = key.slice(4);
+      wiz.customModel = false;
+      goNext();
+    } else {
+      wiz.model = key.slice(2);
+      wiz.customModel = false;
+      goNext();
+    }
+  }
+}
+
+/** Re-render the footer alone (e.g. the next button appearing/disappearing). */
+function refreshFooter(): void {
+  const footer = wizard.querySelector<HTMLElement>('.wiz-footer');
+  if (!footer) return;
+  footer.innerHTML = footerHtml();
+  footer.querySelector('#wiz-back')?.addEventListener('click', goBack);
+}
+
+function wireCustomModel(): void {
+  const customInput = wizard.querySelector<HTMLInputElement>('#wiz-custom-model');
+  if (!customInput) return;
+  const next = wizard.querySelector<HTMLButtonElement>('#wiz-next');
+  if (!next) return;
+  const sync = () => {
+    wiz.model = customInput.value.trim() || null;
+    next.disabled = !wiz.model;
+  };
+  customInput.addEventListener('input', sync);
+  customInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && wiz.model) goNext();
+  });
+  sync();
+  next.addEventListener('click', goNext);
+}
+
 function wireWizard(): void {
   wizard.querySelector('#wiz-close')?.addEventListener('click', closeWizard);
   wizard.querySelector('#wiz-back')?.addEventListener('click', goBack);
 
-  wizard.querySelectorAll<HTMLButtonElement>('.wiz-choice').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      const key = btn.dataset.key!;
-      if (wizStep === 'where') {
-        wiz.where = key as 'local' | 'network' | 'remote';
-        wiz.provider = wiz.where === 'remote' ? null : OLLAMA.id;
-        wiz.model = null;
+  wireChoices(wizard);
+
+  const searchInput = wizard.querySelector<HTMLInputElement>('#wiz-model-search');
+  if (searchInput) {
+    ensureCatalog();
+    searchInput.addEventListener('input', () => {
+      modelQuery = searchInput.value;
+      if (wiz.customModel) {
+        // Searching replaces the free-text path; the footer loses its next button.
         wiz.customModel = false;
-        ollamaTags = null;
-        if (wiz.where === 'local' && ollamaAvailable) {
-          // Prefetch installed tags so the model step can offer them.
-          void api<{ models?: Array<{ name: string }> }>('/ollama/tags')
-            .then((r) => {
-              ollamaTags = (r.models ?? []).map((m) => m.name);
-              if (wizOpen && wizStep === 'model') renderWizard();
-            })
-            .catch(() => {
-              ollamaTags = null;
-            });
-        }
-        goNext();
-      } else if (wizStep === 'provider') {
-        wiz.provider = key;
-        wiz.model = null;
-        wiz.customModel = false;
-        goNext();
-      } else if (wizStep === 'model') {
-        if (key === 'custom') {
-          wiz.customModel = true;
-          renderWizard();
-          wizard.querySelector<HTMLInputElement>('#wiz-custom-model')?.focus();
-        } else {
-          wiz.model = key.slice(2);
-          wiz.customModel = false;
-          goNext();
-        }
+        refreshFooter();
       }
+      if (wiz.provider === OLLAMA.id) searchLibrary(modelQuery.trim());
+      refreshModelLists();
     });
-  });
+  }
 
   const netInput = wizard.querySelector<HTMLInputElement>('#wiz-net-url');
   if (netInput) {
@@ -749,20 +943,7 @@ function wireWizard(): void {
     next.addEventListener('click', goNext);
   }
 
-  const customInput = wizard.querySelector<HTMLInputElement>('#wiz-custom-model');
-  if (customInput) {
-    const next = wizard.querySelector<HTMLButtonElement>('#wiz-next')!;
-    const sync = () => {
-      wiz.model = customInput.value.trim() || null;
-      next.disabled = !wiz.model;
-    };
-    customInput.addEventListener('input', sync);
-    customInput.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' && wiz.model) goNext();
-    });
-    sync();
-    next.addEventListener('click', goNext);
-  }
+  wireCustomModel();
 
   const goalInput = wizard.querySelector<HTMLTextAreaElement>('#wiz-goal');
   if (goalInput) {

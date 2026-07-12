@@ -780,6 +780,8 @@ body.lobby header, body.lobby section, body.lobby main { position: static; }
 }
 .wiz-choice .chev { margin-left: auto; color: var(--muted); font-size: 20px; }
 
+.wiz-search { margin: 0 0 14px; }
+
 .wiz-keylink {
   display: inline-flex; align-items: center; gap: 8px;
   margin: 0 0 14px;

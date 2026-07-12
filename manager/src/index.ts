@@ -178,6 +178,100 @@ api.get('/ollama/tags', async (req, res) => {
   }
 });
 
+// ---------- live model catalogs (wizard hitlist) ----------
+
+interface CatalogModel {
+  id: string;
+  name?: string;
+}
+
+async function catalogJson(url: string, headers: Record<string, string> = {}): Promise<unknown> {
+  const r = await fetch(url, { headers, signal: AbortSignal.timeout(8000) });
+  if (!r.ok) throw new Error(`${new URL(url).host} answered ${r.status}`);
+  return r.json();
+}
+
+/** OpenAI-compatible /models listing ({data: [{id, name?}]}). */
+async function openaiStyleCatalog(url: string, key: string): Promise<CatalogModel[]> {
+  const raw = (await catalogJson(url, { Authorization: `Bearer ${key}` })) as { data?: Array<{ id?: string; name?: string }> };
+  return (raw.data ?? []).flatMap((m) => (m.id ? [{ id: m.id, name: m.name }] : []));
+}
+
+/** OpenAI's own list mixes in embeddings/audio/image models — hide those. */
+const OPENAI_NON_CHAT = /embed|whisper|tts|dall-e|moderation|babbage|davinci|audio|realtime|transcribe|image/;
+
+/**
+ * One fetcher per wizard provider, each hitting the provider's official
+ * model-list endpoint. OpenRouter needs no key; everyone else expects the
+ * key the user just typed into the wizard.
+ */
+const MODEL_CATALOGS: Record<string, (key: string) => Promise<CatalogModel[]>> = {
+  openrouter: async () => {
+    const raw = (await catalogJson('https://openrouter.ai/api/v1/models')) as { data?: Array<{ id?: string; name?: string }> };
+    return (raw.data ?? []).flatMap((m) => (m.id ? [{ id: m.id, name: m.name }] : []));
+  },
+  requesty: (key) => openaiStyleCatalog('https://router.requesty.ai/v1/models', key),
+  openai: async (key) =>
+    (await openaiStyleCatalog('https://api.openai.com/v1/models', key)).filter((m) => !OPENAI_NON_CHAT.test(m.id)),
+  anthropic: async (key) => {
+    const raw = (await catalogJson('https://api.anthropic.com/v1/models?limit=1000', {
+      'x-api-key': key,
+      'anthropic-version': '2023-06-01',
+    })) as { data?: Array<{ id?: string; display_name?: string }> };
+    return (raw.data ?? []).flatMap((m) => (m.id ? [{ id: m.id, name: m.display_name }] : []));
+  },
+  gemini: async (key) => {
+    const raw = (await catalogJson(
+      `https://generativelanguage.googleapis.com/v1beta/models?pageSize=1000&key=${encodeURIComponent(key)}`,
+    )) as { models?: Array<{ name?: string; displayName?: string; supportedGenerationMethods?: string[] }> };
+    return (raw.models ?? [])
+      .filter((m) => m.name && (m.supportedGenerationMethods ?? []).includes('generateContent'))
+      .map((m) => ({ id: m.name!.replace(/^models\//, ''), name: m.displayName }));
+  },
+  mistral: (key) => openaiStyleCatalog('https://api.mistral.ai/v1/models', key),
+  xai: (key) => openaiStyleCatalog('https://api.x.ai/v1/models', key),
+};
+
+/** The provider's live model catalog, for the wizard's searchable hitlist.
+ *  POST so the API key travels in the body, never in a URL or access log;
+ *  it is relayed only to that provider. */
+api.post('/provider-models', async (req, res) => {
+  const { provider, apiKey } = req.body as { provider?: string; apiKey?: string };
+  const source = provider && MODEL_CATALOGS[provider];
+  if (!source) return res.status(400).json({ error: `unknown provider: ${provider}` });
+  if (provider !== 'openrouter' && !apiKey) return res.status(400).json({ error: 'apiKey required' });
+  try {
+    res.json({ models: await source(apiKey ?? '') });
+  } catch (err) {
+    res.status(502).json({ error: (err as Error).message });
+  }
+});
+
+/** Search the Ollama library (models available to pull). There is no official
+ *  API for this — we scan ollama.com/search result links, and the wizard
+ *  falls back to free typing when the markup drifts. */
+api.get('/ollama/library', async (req, res) => {
+  const q = String(req.query.q ?? '').trim();
+  if (!q) return res.json({ models: [] });
+  try {
+    const r = await fetch(`https://ollama.com/search?q=${encodeURIComponent(q)}`, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (brain-manager)' },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!r.ok) throw new Error(`ollama.com answered ${r.status}`);
+    const html = await r.text();
+    const seen = new Set<string>();
+    for (const m of html.matchAll(/href="\/library\/([^"?#]+)"/g)) {
+      const slug = decodeURIComponent(m[1]);
+      if (!seen.has(slug)) seen.add(slug);
+      if (seen.size >= 12) break;
+    }
+    res.json({ models: [...seen].map((id) => ({ id })) });
+  } catch (err) {
+    res.status(502).json({ error: (err as Error).message });
+  }
+});
+
 /** Models already present in the default FLUJO (for adopted brains). */
 api.get('/default-flujo/models', async (_req, res) => {
   try {
