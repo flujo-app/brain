@@ -26,26 +26,48 @@ export interface ProvisionedContainer {
   containerId: string;
   /** URL of the instance as seen from the manager (same Docker network). */
   flujoUrl: string;
+  /** Host loopback port that publishes the instance's own editor UI. */
+  editorPort: number;
 }
 
-export async function createFlujoContainer(brainId: string): Promise<ProvisionedContainer> {
+/**
+ * `editorPorts` are candidate host ports, tried in order — FLUJO's Next.js
+ * editor can't live behind a sub-path proxy, so every brain's editor gets its
+ * own 127.0.0.1-bound port (same model as the default instance's :4200).
+ */
+export async function createFlujoContainer(brainId: string, editorPorts: number[]): Promise<ProvisionedContainer> {
   if (!(await dockerAvailable())) {
     throw new Error('Docker is not available — cannot provision a managed brain (adopt an external FLUJO instead).');
   }
   const name = `brain-flujo-${brainId}`;
-  const container = await docker!.createContainer({
-    name,
-    Image: FLUJO_IMAGE,
-    Labels: { 'ai.brain.id': brainId },
-    HostConfig: {
-      RestartPolicy: { Name: 'unless-stopped' },
-      // Named volumes so a brain's memories survive container replacement.
-      Binds: [`brain-${brainId}-db:/app/db`, `brain-${brainId}-mcp:/app/mcp-servers`],
-      NetworkMode: NETWORK,
-    },
-  });
-  await container.start();
-  return { containerId: container.id, flujoUrl: `http://${name}:4200` };
+  let lastErr: Error | null = null;
+  for (const port of editorPorts) {
+    const container = await docker!.createContainer({
+      name,
+      Image: FLUJO_IMAGE,
+      Labels: { 'ai.brain.id': brainId },
+      ExposedPorts: { '4200/tcp': {} },
+      HostConfig: {
+        RestartPolicy: { Name: 'unless-stopped' },
+        // Named volumes so a brain's memories survive container replacement.
+        Binds: [`brain-${brainId}-db:/app/db`, `brain-${brainId}-mcp:/app/mcp-servers`],
+        NetworkMode: NETWORK,
+        // Loopback only — same security posture as every other published port.
+        PortBindings: { '4200/tcp': [{ HostIp: '127.0.0.1', HostPort: String(port) }] },
+      },
+    });
+    try {
+      await container.start();
+      return { containerId: container.id, flujoUrl: `http://${name}:4200`, editorPort: port };
+    } catch (err) {
+      lastErr = err as Error;
+      // The name must be free before the next attempt.
+      await container.remove({ force: true }).catch(() => undefined);
+      // Only a taken port is retryable — anything else is a real failure.
+      if (!/port|address|bind|allocated/i.test(lastErr.message)) throw lastErr;
+    }
+  }
+  throw lastErr ?? new Error('No free editor port found for the FLUJO container.');
 }
 
 export async function removeFlujoContainer(containerId: string, brainId: string, purge: boolean): Promise<void> {

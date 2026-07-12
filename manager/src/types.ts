@@ -10,6 +10,10 @@ export interface BrainRecord {
   containerId?: string;
   /** URL-path secret FLUJO uses to reach this brain's MCP endpoint. */
   token: string;
+  /** Host loopback port publishing a managed brain's FLUJO editor. */
+  editorPort?: number;
+  /** FLUJO editor URL reachable from the user's browser (host perspective). */
+  editorUrl?: string;
   modelId?: string;
   modelName?: string;
   brainstemFlowId?: string;

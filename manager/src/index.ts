@@ -12,6 +12,9 @@ import type { CreateBrainRequest } from './types.js';
 
 const PORT = Number(process.env.PORT ?? 8090);
 const FLUJO_DEFAULT_URL = process.env.FLUJO_DEFAULT_URL ?? 'http://localhost:4200';
+/** The default FLUJO as the user's BROWSER reaches it (FLUJO_DEFAULT_URL is
+ *  container-internal in Docker; compose publishes it on 127.0.0.1:4200). */
+const FLUJO_DEFAULT_PUBLIC_URL = process.env.FLUJO_DEFAULT_PUBLIC_URL ?? FLUJO_DEFAULT_URL;
 const OLLAMA_URL = process.env.OLLAMA_URL;
 const UI_DIR = process.env.UI_DIR ?? path.join(process.cwd(), '..', 'dist');
 
@@ -102,6 +105,7 @@ api.get('/brains', async (_req, res) => {
     brains: registry.list().map(publicBrain),
     docker: await dockerAvailable(),
     defaultFlujo: FLUJO_DEFAULT_URL,
+    defaultFlujoEditor: FLUJO_DEFAULT_PUBLIC_URL,
     ollama: Boolean(OLLAMA_URL),
   });
 });
@@ -122,8 +126,13 @@ api.post('/brains', async (req, res) => {
   }
   // 'default' = adopt the stack's default FLUJO without the browser needing
   // to know its internal URL.
-  if (body.adoptUrl === 'default') body.adoptUrl = FLUJO_DEFAULT_URL;
+  const adoptsDefault = body.adoptUrl === 'default';
+  if (adoptsDefault) body.adoptUrl = FLUJO_DEFAULT_URL;
   const brain = newBrainRecord(body.name.trim(), body.lifeGoal.trim());
+  // Adopted instances: the editor link is the URL as the browser knows it.
+  if (body.adoptUrl) {
+    brain.editorUrl = (adoptsDefault ? FLUJO_DEFAULT_PUBLIC_URL : body.adoptUrl).replace(/\/+$/, '');
+  }
   await registry.put(brain);
   void provisionBrain(registry, brain, body); // runs in background; lobby polls status
   res.status(202).json(publicBrain(brain));

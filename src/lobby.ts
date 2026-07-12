@@ -10,6 +10,8 @@ interface Brain {
   modelName?: string;
   kind: 'managed' | 'external';
   createdAt: string;
+  /** This brain's FLUJO editor, reachable from the user's browser. */
+  editorUrl?: string;
 }
 
 interface BrainsResponse {
@@ -233,6 +235,10 @@ function renderCard(b: Brain): void {
     b.status === 'ready'
       ? `<a class="open" href="./?flujo=${encodeURIComponent(`/brains/${b.id}/flujo`)}">${esc(t('card.open'))}</a>`
       : '';
+  const editor =
+    b.status === 'ready' && b.editorUrl
+      ? `<a class="open editor" href="${esc(b.editorUrl)}" target="_blank" rel="noopener">${esc(t('card.editor'))}</a>`
+      : '';
   const detail = b.status === 'error' && b.statusDetail ? `<p class="detail">${esc(b.statusDetail)}</p>` : '';
   const born = t('card.born', { date: new Date(b.createdAt).toLocaleDateString(getLang()) });
   orbit.cardBody.innerHTML = `
@@ -241,7 +247,7 @@ function renderCard(b: Brain): void {
     <p class="goal">${esc(b.lifeGoal)}</p>
     ${detail}
     <p class="meta">${esc(b.modelName ?? t('card.noModel'))} · ${esc(t(`card.kind.${b.kind}`))} · ${esc(born)}</p>
-    <footer>${open}<button class="forget" type="button">${esc(t('card.forget'))}</button></footer>`;
+    <footer>${open}${editor}<button class="forget" type="button">${esc(t('card.forget'))}</button></footer>`;
   orbit.cardBody.querySelector<HTMLButtonElement>('.forget')!.addEventListener('click', async () => {
     if (!confirm(t('card.forgetConfirm', { name: b.name }))) return;
     await api(`/brains/${b.id}`, { method: 'DELETE' });

@@ -23,6 +23,8 @@ services:
       - brain-data:/data
     environment:
       - FLUJO_DEFAULT_URL=http://flujo:4200
+      # Same instance as the browser reaches it (for editor links in the UI).
+      - FLUJO_DEFAULT_PUBLIC_URL=http://127.0.0.1:4200
       - OLLAMA_URL=http://ollama:11434
       - FLUJO_IMAGE=ghcr.io/mario-andreschak/flujo:latest
       - DOCKER_NETWORK=brain-net

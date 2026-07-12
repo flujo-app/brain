@@ -93,9 +93,16 @@ export async function provisionBrain(registry: Registry, brain: BrainRecord, req
     } else {
       brain.kind = 'managed';
       await step('creating FLUJO container…');
-      const c = await createFlujoContainer(brain.id);
+      // Candidate editor ports: 4201 upwards, skipping ones the registry
+      // already handed out (the host may still hold others — docker.ts retries).
+      const used = new Set(registry.list().map((b) => b.editorPort).filter(Boolean));
+      const candidates: number[] = [];
+      for (let p = 4201; p <= 4299 && candidates.length < 20; p++) if (!used.has(p)) candidates.push(p);
+      const c = await createFlujoContainer(brain.id, candidates);
       brain.containerId = c.containerId;
       brain.flujoUrl = c.flujoUrl;
+      brain.editorPort = c.editorPort;
+      brain.editorUrl = `http://127.0.0.1:${c.editorPort}`;
       await registry.put(brain);
     }
     const flujo = new FlujoClient(brain.flujoUrl);

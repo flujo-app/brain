@@ -102,13 +102,21 @@ Dev hook: `__brainSim({kind:'run-start', …})` in the console simulates events 
 
 ## Pause & the AI input window
 
-The **⏸ pause** button in the viewer header freezes the whole mind and opens a chat dock (`src/data/pause.ts` + `src/ui/aichat.ts`):
+The **⏸ pause** button in the viewer header freezes the whole mind; the chat dock is always on screen once FLUJO answers (`src/data/pause.ts` + `src/ui/aichat.ts`):
 
-- **Scheduler**: `PATCH /api/planned-executions {paused: true}` — FLUJO's global pause switch; no planned execution (heartbeat) fires until resume.
+- **Scheduler**: `PATCH /api/planned-executions {paused: true}` — FLUJO's global pause switch; no planned execution (heartbeat) fires until resume. The button mirrors FLUJO's real scheduler state (polled every 20s), so an externally paused instance shows **▶ resume**.
 - **Running flows**: every conversation with `status: running` gets breakpoints armed on all of its flow's node ids (`PUT /v1/chat/conversations/{id}/breakpoints`). The run halts at the next node boundary with `status: paused_debug`. On resume, breakpoints are cleared and still-paused conversations are continued via `POST .../debug/continue`. Runs started *while* paused (including the AI input's own) are deliberately left alone.
-- **AI input**: a chat dock wired to `POST /v1/chat/completions`. You pick a target behaviour (`model: "flow-<name>"`; a flow named like *brain-stem* is preselected when present) and every **other** behaviour is offered to the model as an OpenAI-style client-side tool — all enabled by default, toggleable as chips. FLUJO forwards client-supplied `tools` per standard OpenAI semantics, so when the model answers with `finish_reason: "tool_calls"`, brain executes each call as its own ephemeral flow run (`model: "flow-<tool>"`), appends the result as a `role: "tool"` message, and re-sends — up to 8 rounds per turn. Each tool run is a real FLUJO conversation, so it animates live in the viewer.
-- **Continuity**: the dock keeps the full message history client-side and re-sends it each turn with `metadata.conversationId` (FLUJO treats the request's message list as the authoritative replacement). Switching the target behaviour starts a fresh conversation.
+- **AI input**: a chat dock wired to `POST /v1/chat/completions`, visible at all times (the × minimizes it to a 💬 chip). It always talks to the **brain-stem** (`model: "flow-<stem name>"` — the flow carrying the life goal); there is no flow picker. Every **other** behaviour is offered to the model as an OpenAI-style client-side tool — all enabled by default, toggleable as chips. FLUJO forwards client-supplied `tools` per standard OpenAI semantics, so when the model answers with `finish_reason: "tool_calls"`, brain executes each call as its own ephemeral flow run (`model: "flow-<tool>"`), appends the result as a `role: "tool"` message, and re-sends — up to 8 rounds per turn. Each tool run is a real FLUJO conversation, so it animates live in the viewer.
+- **Continuity**: the dock keeps the full message history client-side and re-sends it each turn with `metadata.conversationId` (FLUJO treats the request's message list as the authoritative replacement). A new brain-stem starts a fresh conversation.
 - **Queueing**: messages typed while a turn is in flight render as dimmed bubbles and dispatch in order when the current turn finishes.
+
+### Adopted instances: vitals & setup asks
+
+On every graph rebuild (plus a slow 20s poll) the dock checks the brain's vitals via `GET /api/planned-executions`:
+
+- **No enabled heartbeat for the brain-stem** → the mind **starts paused** (one-time scheduler `PATCH {paused: true}` on first contact) so nothing scheduled fires until the user consciously resumes.
+- **Brain-stem present, heartbeat missing** → the dock asks to start one: a cron picker + one button that `POST`s the planned execution (wake prompt mirrored from `manager/src/brainstem.ts`) straight into the running FLUJO — no manager needed.
+- **No brain-stem at all** (typical for a directly adopted instance) → the dock asks to grow one *in the running instance*: name, life goal, a model already known to that FLUJO, optional heartbeat. The form `POST`s `/api/brains` (`model: {mode:'existing'}`, `adoptUrl` = the FLUJO URL, or `'default'` when reached via the same-origin proxy) and polls provisioning status. This path needs the brain-manager (it hosts the brain-stem's MCP tool belt); without it the dock says so instead of offering the form.
 
 ## Brains, the lobby, and the manager
 

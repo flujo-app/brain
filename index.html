@@ -16,12 +16,12 @@
         <span class="glyph">🧠</span>
         <div>
           <h1>brain</h1>
-          <p>FLUJO behaviours as neurons · <span id="source-badge">loading…</span></p>
+          <p>FLUJO behaviours as neurons · <a id="source-badge">loading…</a></p>
         </div>
       </div>
       <div class="controls">
         <a id="lobby-link" class="lobby-link hidden" href="./lobby.html">⬡ brains</a>
-        <button id="pause-btn" title="Pause the heartbeat and every running flow, then talk to the brain">⏸ pause</button>
+        <button id="pause-btn" title="Pause the heartbeat and every running flow">⏸ pause</button>
         <label class="group-picker">
           <span>view</span>
           <select id="view-mode">
@@ -89,14 +89,10 @@
 
     <section id="ai-dock" class="hidden">
       <header>
-        <span class="k">the brain is paused · talk to it</span>
-        <button id="ai-close" aria-label="resume and close">×</button>
+        <span class="k" id="ai-title">talk to the brain</span>
+        <button id="ai-close" aria-label="hide chat">×</button>
       </header>
-      <div class="ai-row">
-        <label>talk to
-          <select id="ai-target"></select>
-        </label>
-      </div>
+      <div id="ai-setup" class="hidden"></div>
       <details class="ai-toolbox">
         <summary>behaviours it may use as tools <b id="ai-tool-count">0</b></summary>
         <div id="ai-tools"></div>
@@ -107,6 +103,7 @@
         <button id="ai-send" aria-label="send">↑</button>
       </div>
     </section>
+    <button id="ai-open" class="hidden" title="talk to the brain">💬</button>
 
     <div id="tooltip" class="hidden"></div>
 

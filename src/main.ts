@@ -1,5 +1,5 @@
 import './style.css';
-import { fetchBrain, watchBrain } from './data/loader';
+import { fetchBrain, flujoBase, watchBrain } from './data/loader';
 import { ExecutionWatcher, type BrainActivityEvent } from './data/execution';
 import { Brain } from './scene/brain';
 import { Brain2D } from './scene2d/brain2d';
@@ -14,6 +14,46 @@ function setBadge(text: string, connected: boolean) {
   if (!badge) return;
   badge.textContent = text;
   badge.classList.toggle('snapshot', !connected);
+}
+
+/**
+ * The FLUJO editor as the BROWSER reaches it, for the badge link: a direct
+ * base (adopted/override) is its own editor; proxy bases are translated by
+ * the manager (per-brain editor port, or the default instance's public URL).
+ */
+async function editorUrl(base: string | null): Promise<string | null> {
+  if (!base) return null;
+  if (/^https?:\/\//i.test(base)) return base;
+  try {
+    const perBrain = base.match(/^\/brains\/([^/]+)\/flujo\/?$/);
+    if (perBrain) {
+      const r = await fetch(`/api/brains/${perBrain[1]}`);
+      return r.ok ? ((await r.json()) as { editorUrl?: string }).editorUrl ?? null : null;
+    }
+    if (base === '/flujo') {
+      const r = await fetch('/api/brains');
+      if (r.ok) return ((await r.json()) as { defaultFlujoEditor?: string }).defaultFlujoEditor ?? null;
+      return 'http://localhost:4200'; // vite dev proxy without a manager
+    }
+  } catch {
+    // No manager to ask — leave the badge unlinked.
+  }
+  return null;
+}
+
+/** Once connected, make the badge a link to the instance's own editor. */
+let editorLinked = false;
+function linkBadgeToEditor(): void {
+  if (editorLinked) return;
+  editorLinked = true;
+  void editorUrl(flujoBase()).then((url) => {
+    const badge = document.getElementById('source-badge') as HTMLAnchorElement | null;
+    if (!badge || !url) return;
+    badge.href = url;
+    badge.target = '_blank';
+    badge.rel = 'noopener';
+    badge.title = 'open the FLUJO editor';
+  });
 }
 
 function webglAvailable(): boolean {
@@ -83,6 +123,7 @@ async function boot() {
       // Reachable but empty (fresh instance) — distinct from unreachable.
       setBadge('● FLUJO connected — no flows yet', true);
     }
+    linkBadgeToEditor();
     aiDock.setGraph(graph);
   };
 

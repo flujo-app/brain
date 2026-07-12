@@ -31,6 +31,7 @@ const en: Record<string, string> = {
   'status.error': 'needs help',
 
   'card.open': 'open this brain →',
+  'card.editor': 'FLUJO editor ↗',
   'card.forget': 'forget',
   'card.forgetConfirm': 'Forget "{name}"? Its home is removed, but its memories are kept.',
   'card.born': 'born {date}',
@@ -127,6 +128,7 @@ const de: Record<string, string> = {
   'status.error': 'braucht Hilfe',
 
   'card.open': 'dieses Gehirn öffnen →',
+  'card.editor': 'FLUJO-Editor ↗',
   'card.forget': 'vergessen',
   'card.forgetConfirm': '"{name}" vergessen? Sein Zuhause wird entfernt, seine Erinnerungen bleiben erhalten.',
   'card.born': 'geboren am {date}',
@@ -223,6 +225,7 @@ const es: Record<string, string> = {
   'status.error': 'necesita ayuda',
 
   'card.open': 'abrir este cerebro →',
+  'card.editor': 'editor FLUJO ↗',
   'card.forget': 'olvidar',
   'card.forgetConfirm': '¿Olvidar "{name}"? Su hogar se elimina, pero sus recuerdos se conservan.',
   'card.born': 'nacido el {date}',
@@ -319,6 +322,7 @@ const fr: Record<string, string> = {
   'status.error': 'a besoin d’aide',
 
   'card.open': 'ouvrir ce cerveau →',
+  'card.editor': 'éditeur FLUJO ↗',
   'card.forget': 'oublier',
   'card.forgetConfirm': 'Oublier « {name} » ? Son foyer est supprimé, mais ses souvenirs sont conservés.',
   'card.born': 'né le {date}',
