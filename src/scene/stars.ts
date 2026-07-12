@@ -21,17 +21,24 @@ const VERT = /* glsl */ `
   attribute float aSize;
   attribute float aAlpha;
   attribute float aPhase;
+  attribute float aBoost;
   attribute vec3 aColor;
   uniform float uScale;
   uniform float uTime;
+  uniform float uFogDensity;
   varying vec3 vColor;
   varying float vAlpha;
+  varying float vFog;
   void main() {
-    vColor = aColor;
+    // Execution wake glow: boosted stars brighten toward white and swell.
+    vColor = mix(aColor, vec3(1.0), aBoost * 0.3);
     // Gentle twinkle so the brain feels alive.
-    vAlpha = aAlpha * (0.82 + 0.18 * sin(uTime * 1.3 + aPhase));
+    vAlpha = (aAlpha + aBoost * 0.9) * (0.82 + 0.18 * sin(uTime * 1.3 + aPhase));
     vec4 mv = modelViewMatrix * vec4(position, 1.0);
-    gl_PointSize = aSize * uScale / -mv.z;
+    // Exp2 depth fade: the brain's far side recedes instead of stacking flat.
+    float fd = -mv.z * uFogDensity;
+    vFog = exp(-fd * fd);
+    gl_PointSize = aSize * (1.0 + aBoost * 0.35) * uScale / -mv.z;
     gl_Position = projectionMatrix * mv;
   }
 `;
@@ -40,11 +47,12 @@ const FRAG = /* glsl */ `
   uniform sampler2D uTex;
   varying vec3 vColor;
   varying float vAlpha;
+  varying float vFog;
   void main() {
     vec4 t = texture2D(uTex, gl_PointCoord);
     float a = t.a * vAlpha;
     if (a < 0.01) discard;
-    gl_FragColor = vec4(vColor * (0.5 + t.r), a);
+    gl_FragColor = vec4(vColor * (0.5 + t.r) * vFog, a);
   }
 `;
 
@@ -61,10 +69,10 @@ export class StarField {
   private material: ShaderMaterial;
   private coreMeta: CoreMeta[] = [];
   readonly indexById = new Map<string, number>();
-  /** neuronId -> (innerNodeId -> world position), for the focus wiring overlay. */
-  readonly innerWorld = new Map<string, Map<string, Vector3>>();
   private coreAlpha: Float32BufferAttribute;
   private satAlpha: Float32BufferAttribute;
+  private coreBoost: Float32BufferAttribute;
+  private satBoost: Float32BufferAttribute;
   private satOwner: number[] = []; // satellite -> core index
   private satBase: number[] = [];
 
@@ -99,26 +107,24 @@ export class StarField {
       cAlpha.push(base);
       cPhase.push((ci * 12.9898) % 6.28);
 
-      // Satellites: the flow's internal nodes, scattered tightly around the core.
+      // Satellites: the behaviour's internal nodes, scattered tightly around
+      // the core. Kept subtle — the focused view renders the real graph.
       const spread = radius * 1.7 + 1.2;
-      const inner = new Map<string, Vector3>();
-      this.innerWorld.set(neuron.id, inner);
       neuron.inner.nodes.forEach((node, k) => {
         const jz = (((ci * 7 + k) * 2654435761) % 1000) / 1000 - 0.5;
         const sp = new Vector3(p.x + node.x * spread, p.y + node.y * spread, p.z + jz * spread);
-        inner.set(node.id, sp);
         const shade = 0.55 + (((ci + k) * 40503) % 100) / 100 * 0.4;
         sPos.push(sp.x, sp.y, sp.z);
-        // MCP nodes whose server is down/disabled break from the galaxy hue.
+        // Ability nodes whose server is down/disabled break from the galaxy hue.
         const status = node.type === 'mcp' && node.server ? graph.servers[node.server] : undefined;
         if (status === 'disconnected') sCol.push(1.0 * shade, 0.36 * shade, 0.54 * shade);
         else if (status === 'disabled') sCol.push(0.33 * shade, 0.38 * shade, 0.5 * shade);
         else sCol.push(color.r * shade, color.g * shade, color.b * shade);
-        sSize.push(0.42 + shade * 0.5);
-        sAlpha.push(0.7);
+        sSize.push(0.34 + shade * 0.4);
+        sAlpha.push(0.55);
         sPhase.push(((ci * 31 + k * 17) % 628) / 100);
         this.satOwner.push(ci);
-        this.satBase.push(0.7);
+        this.satBase.push(0.55);
       });
     });
 
@@ -127,6 +133,7 @@ export class StarField {
         uTex: { value: glowTexture() },
         uScale: { value: 600 },
         uTime: { value: 0 },
+        uFogDensity: { value: 0 },
       },
       vertexShader: VERT,
       fragmentShader: FRAG,
@@ -137,8 +144,10 @@ export class StarField {
 
     this.cores = this.buildPoints(cPos, cCol, cSize, cAlpha, cPhase);
     this.coreAlpha = this.cores.geometry.getAttribute('aAlpha') as Float32BufferAttribute;
+    this.coreBoost = this.cores.geometry.getAttribute('aBoost') as Float32BufferAttribute;
     this.satellites = this.buildPoints(sPos, sCol, sSize, sAlpha, sPhase);
     this.satAlpha = this.satellites.geometry.getAttribute('aAlpha') as Float32BufferAttribute;
+    this.satBoost = this.satellites.geometry.getAttribute('aBoost') as Float32BufferAttribute;
     this.satellites.renderOrder = -0.5;
   }
 
@@ -151,6 +160,9 @@ export class StarField {
     a.setUsage(DynamicDrawUsage);
     geo.setAttribute('aAlpha', a);
     geo.setAttribute('aPhase', new Float32BufferAttribute(phase, 1));
+    const boost = new Float32BufferAttribute(new Float32Array(alpha.length), 1);
+    boost.setUsage(DynamicDrawUsage);
+    geo.setAttribute('aBoost', boost);
     return new Points(geo, this.material);
   }
 
@@ -166,17 +178,36 @@ export class StarField {
     this.material.uniforms.uTime.value = t;
   }
 
+  setFog(density: number): void {
+    this.material.uniforms.uFogDensity.value = density;
+  }
+
+  /** Execution wake glow per behaviour (0..1); satellites follow their core. */
+  setBoost(levels: ReadonlyMap<string, number>): void {
+    const cb = this.coreBoost.array as Float32Array;
+    this.coreMeta.forEach((m, i) => {
+      cb[i] = levels.get(m.neuron.id) ?? 0;
+    });
+    this.coreBoost.needsUpdate = true;
+    const sb = this.satBoost.array as Float32Array;
+    for (let i = 0; i < this.satOwner.length; i++) {
+      sb[i] = (levels.get(this.coreMeta[this.satOwner[i]].neuron.id) ?? 0) * 0.7;
+    }
+    this.satBoost.needsUpdate = true;
+  }
+
   /**
    * Spotlight a subset. `visible === null` -> resting glow. Satellites follow
-   * their owning neuron.
+   * their owning neuron. `hideFocused` blanks the focused star entirely so the
+   * flow-graph view can take its place without glow bleeding through.
    */
-  spotlight(visible: Set<string> | null, focusId: string | null): void {
+  spotlight(visible: Set<string> | null, focusId: string | null, hideFocused = false): void {
     const ca = this.coreAlpha.array as Float32Array;
     this.coreMeta.forEach((m, i) => {
-      if (!visible) ca[i] = m.base;
-      else if (m.neuron.id === focusId) ca[i] = Math.min(m.base * 1.5, 1.4);
-      else if (visible.has(m.neuron.id)) ca[i] = m.base;
-      else ca[i] = 0.1;
+      if (m.neuron.id === focusId) ca[i] = hideFocused ? 0 : Math.min(m.base * 1.5, 1.4);
+      else if (!visible) ca[i] = m.base;
+      else if (visible.has(m.neuron.id)) ca[i] = hideFocused ? m.base * 0.3 : m.base;
+      else ca[i] = hideFocused ? 0.02 : 0.08;
     });
     this.coreAlpha.needsUpdate = true;
 
@@ -184,10 +215,10 @@ export class StarField {
     for (let i = 0; i < this.satOwner.length; i++) {
       const owner = this.coreMeta[this.satOwner[i]];
       const base = this.satBase[i];
-      if (!visible) sa[i] = base;
-      else if (owner.neuron.id === focusId) sa[i] = Math.min(base * 1.3, 1);
-      else if (visible.has(owner.neuron.id)) sa[i] = base;
-      else sa[i] = 0.05;
+      if (owner.neuron.id === focusId) sa[i] = hideFocused ? 0 : Math.min(base * 1.3, 1);
+      else if (!visible) sa[i] = base;
+      else if (visible.has(owner.neuron.id)) sa[i] = hideFocused ? base * 0.18 : base;
+      else sa[i] = hideFocused ? 0.01 : 0.04;
     }
     this.satAlpha.needsUpdate = true;
   }

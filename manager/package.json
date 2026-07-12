@@ -1,0 +1,25 @@
+{
+  "name": "brain-manager",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "brain-manager: provisions FLUJO instances per brain, hosts the brain-stem MCP server, proxies the UI to each instance.",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "tsx src/index.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "dockerode": "^4.0.2",
+    "express": "^4.21.2",
+    "tsx": "^4.19.2",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/dockerode": "^3.3.31",
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.2"
+  }
+}

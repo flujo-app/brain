@@ -1,0 +1,7 @@
+node_modules
+manager/node_modules
+manager/data
+dist
+.git
+docs
+*.md

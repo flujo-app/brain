@@ -17,13 +17,14 @@ export interface SectionedLayout {
  * structure (subflow ties pull hardest, cross-galaxy ties barely pull so the
  * galaxies stay distinct).
  */
-export function computeSectionedLayout(graph: BrainGraph, grouping: Grouping, iterations = 260): SectionedLayout {
+export function computeSectionedLayout(graph: BrainGraph, grouping: Grouping, flat = false, iterations = 260): SectionedLayout {
   const nodes = graph.neurons;
   const n = nodes.length;
   const groups = grouping.groups;
   const g = groups.length;
 
-  // Galaxy centres on a Fibonacci sphere (single group -> origin).
+  // Galaxy centres on a Fibonacci sphere; in flat mode, on a sunflower disc
+  // in the z=0 plane (single group -> origin).
   const centers = new Map<string, Vector3>();
   const spread = g <= 1 ? 0 : 22 + Math.sqrt(g) * 14 + Math.cbrt(n) * 4;
   groups.forEach((grp, i) => {
@@ -31,9 +32,14 @@ export function computeSectionedLayout(graph: BrainGraph, grouping: Grouping, it
       centers.set(grp.id, new Vector3(0, 0, 0));
       return;
     }
+    const theta = Math.PI * (1 + Math.sqrt(5)) * i;
+    if (flat) {
+      const r = spread * 1.15 * Math.sqrt((i + 0.5) / g);
+      centers.set(grp.id, new Vector3(r * Math.cos(theta), r * Math.sin(theta), 0));
+      return;
+    }
     const t = (i + 0.5) / g;
     const phi = Math.acos(1 - 2 * t);
-    const theta = Math.PI * (1 + Math.sqrt(5)) * i;
     centers.set(
       grp.id,
       new Vector3(spread * Math.sin(phi) * Math.cos(theta), spread * Math.cos(phi) * 0.7, spread * Math.sin(phi) * Math.sin(theta)),
@@ -49,7 +55,12 @@ export function computeSectionedLayout(graph: BrainGraph, grouping: Grouping, it
     const c = centers.get(groupOf.get(node.id)!)!;
     const a = i * 2.399963; // golden angle
     const r = 3 + ((i * 2654435761) % 1000) / 1000 * 5;
-    pos.set(node.id, new Vector3(c.x + Math.cos(a) * r, c.y + Math.sin(a * 1.7) * r * 0.6, c.z + Math.sin(a) * r));
+    pos.set(
+      node.id,
+      flat
+        ? new Vector3(c.x + Math.cos(a) * r, c.y + Math.sin(a) * r, 0)
+        : new Vector3(c.x + Math.cos(a) * r, c.y + Math.sin(a * 1.7) * r * 0.6, c.z + Math.sin(a) * r),
+    );
     vel.set(node.id, new Vector3());
   });
 
@@ -113,6 +124,10 @@ export function computeSectionedLayout(graph: BrainGraph, grouping: Grouping, it
       v.multiplyScalar(DAMPING);
       if (v.length() > MAX_STEP) v.setLength(MAX_STEP);
       p.addScaledVector(v, cool);
+      if (flat) {
+        p.z = 0;
+        v.z = 0;
+      }
     }
   }
 

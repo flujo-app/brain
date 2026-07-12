@@ -4,6 +4,8 @@
 
 Every FLUJO flow becomes a glowing **neuron**. The connections *between* flows become **synapses** with signals pulsing along them, so a whole FLUJO workspace reads at a glance as a living neural network.
 
+Where this is heading — Docker bundle, live execution follow-cam, brains with life goals — lives in [ROADMAP.md](ROADMAP.md).
+
 ![brain](docs/preview.png)
 
 ## What you're looking at
@@ -43,44 +45,47 @@ Within a galaxy each flow is a bright **core star** (sized by node count) surrou
 - **Drag** to orbit, **scroll** to zoom (the brain gently auto-rotates until you touch it).
 - **Hover** a neuron to see its name and light up its immediate connections.
 - **Click** a neuron to zoom into it: the camera flies in, the flow's internal nodes get labels (start / process / mcp / subflow / finish) and wiring, and the side panel shows its MCP servers and connections in collapsible groups.
+- **`view`** dropdown switches between the WebGL **3D orbit** and a true **2D map** rendered with the Canvas 2D API (pan & zoom, sections laid out on a disc) — no GPU shaders, built for modest hardware. The choice is remembered; machines without WebGL or with few cores start in 2D automatically.
 - **`sections by`** dropdown regroups the whole brain by provider / folder / model.
 - **Search** to spotlight flows by name.
 - **Deep link** with `?focus=<flow name>` to open the brain zoomed into a flow.
 - Toggle any **synapse type** in the legend.
 - Click empty space to reset.
 
-## Data: live or snapshot
+## Live execution: watch it think
 
-On load, `brain` first tries a **running FLUJO instance** at `http://localhost:4200` (`GET /api/flow`, `/api/model`, `/api/mcp/servers` + per-server status). If FLUJO isn't running — or the request is blocked cross-origin — it falls back to a **bundled snapshot** generated from your local FLUJO database. The source badge at the top shows which one is active.
+While a flow runs in FLUJO, its neuron **wakes up** — brighter, whiter, pulsing. Subflow calls flash along their axon, and with the **follow** toggle on, the camera flies to whatever behaviour is executing right now. Inside a focused behaviour, the currently executing node lights up, and a strip at the bottom names the running behaviour, its current node or tool call, and how many runs are active.
 
-**Live refresh:** the brain polls FLUJO every few seconds and rebuilds itself when anything changes — new or edited flows, newly installed MCP servers, or a server's connection state flipping. A snapshot also upgrades itself to live automatically the moment FLUJO becomes reachable.
+This rides on FLUJO's per-conversation SSE event stream (`node:enter`, `subflow:start`, `tool:call`, …) — no polling of execution state, no FLUJO changes.
 
-**MCP server state:** every MCP server a flow binds is shown with a status dot — 🟢 connected, 🔴 disconnected, ⚪ disabled (live only; a snapshot shows `unknown`). Satellite stars of `mcp` nodes whose server is down or disabled break from their galaxy's hue so problems are visible from orbit.
+## Brains: life goals & the brain-stem
 
-Both paths run the exact same distillation logic ([`src/data/distill.ts`](src/data/distill.ts)), so the picture is identical either way.
+Beyond visualizing one FLUJO workspace, the **lobby** (`/lobby.html`) grows whole *brains*: each brain is its own FLUJO instance with a **life goal** and a **brain-stem** — a root flow bound to the model you pick (local via Ollama, or bring-your-own-key, stored encrypted by FLUJO). The brain-stem thinks with seven tools served by brain itself over MCP (`list/learn/perform/forget` behaviours and skills — friendly verbs over FLUJO's own API, with guardrails so it can't delete or recurse into itself), and a **heartbeat** (FLUJO planned execution) wakes it on a schedule. Everything it does animates live in the viewer. See [ROADMAP.md](ROADMAP.md) for the architecture.
 
-### Regenerating the snapshot
+Run the manager locally: `cd manager && npm install && npm run dev` (port 8090; the vite dev server proxies `/api` and `/brains` to it).
 
-```bash
-npm run gen
-```
-
-This reads your FLUJO `db/` directory and writes `public/data/flows.json`. It looks for the db in this order:
-
-1. `$FLUJO_DB` — explicit path to a `db` folder
-2. `$FLUJO_HOME/db`
-3. common locations (`~/Documents/GitHub/FLUJO/db`, `~/FLUJO/db`, `~/.flujo/db`, `../FLUJO/db`)
+## Run with Docker
 
 ```bash
-FLUJO_DB=/path/to/FLUJO/db npm run gen
+docker compose up
 ```
+
+brings up the brain (lobby + viewer + manager) at **http://localhost:8080**, a default FLUJO instance (editor at http://localhost:4200), and Ollama for local models. Creating a brain provisions a fresh FLUJO container on an internal network, reachable only through the manager. All ports are bound to localhost only — FLUJO has no auth, and the manager holds the Docker socket, so never expose this stack without your own authenticating reverse proxy.
+
+## Data: live only
+
+`brain` talks to a **running FLUJO instance** (`GET /api/flow`, `/api/model`, `/api/mcp/servers` + per-server status). It finds FLUJO by trying, in order: an explicit override (`?flujo=<url>` query param, `window.__FLUJO_URL__`, or `VITE_FLUJO_URL`), the same-origin `/flujo` proxy path (vite dev proxy locally, nginx in the Docker bundle), then `http://localhost:4200` directly. Everything is fetched at runtime and held in memory only — nothing is persisted, and a page reload starts from scratch. If FLUJO isn't running yet, the brain waits and boots itself the moment FLUJO becomes reachable.
+
+**Live refresh:** the brain polls FLUJO every few seconds and rebuilds itself when anything changes — new or edited flows, newly installed MCP servers, or a server's connection state flipping.
+
+**MCP server state:** every MCP server a flow binds is shown with a status dot — 🟢 connected, 🔴 disconnected, ⚪ disabled. Satellite stars of `mcp` nodes whose server is down or disabled break from their galaxy's hue so problems are visible from orbit.
 
 ## Develop
 
 ```bash
 npm install
 npm run dev      # vite dev server
-npm run build    # regenerate snapshot, typecheck, and build to dist/
+npm run build    # typecheck and build to dist/
 npm run preview  # serve the production build
 ```
 
@@ -88,7 +93,7 @@ Built with [Three.js](https://threejs.org/), TypeScript, and Vite. No backend �
 
 ## How it maps FLUJO → brain
 
-FLUJO flows are graphs of typed nodes (`start`, `process`, `mcp`, `subflow`, `finish`) connected by edges. `brain` distils each flow into a neuron, reading:
+FLUJO flows are graphs of typed nodes (`start`, `process`, `mcp`, `subflow`, `finish`) connected by edges. Node and synapse colours follow FLUJO's own editor palette (amber subflows, blue abilities, green finish…), so the focused view reads like the flow you built. `brain` distils each flow into a neuron, reading:
 
 - **process** nodes → the models/providers the flow uses (`boundModel`)
 - **mcp** nodes → the MCP servers it binds (`boundServer`)

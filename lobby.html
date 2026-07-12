@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>brains · lobby</title>
+    <meta name="description" content="Create and manage brains — each one a FLUJO instance with a life goal and a brain-stem." />
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='13' font-size='13'>🧠</text></svg>" />
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body class="lobby">
+    <header id="lobby-top">
+      <div class="title">
+        <span class="glyph">🧠</span>
+        <div>
+          <h1>brains</h1>
+          <p data-i18n="app.subtitle">every brain lives its own life, chasing a goal you give it</p>
+        </div>
+      </div>
+      <div class="lobby-controls">
+        <label class="lang-picker" title="Language">
+          <span aria-hidden="true">🌐</span>
+          <select id="lang-select" aria-label="Language"></select>
+        </label>
+      </div>
+    </header>
+
+    <main id="lobby-main">
+      <p id="manager-offline" class="offline hidden">
+        <span data-i18n="lobby.offline">⚠ the brain keeper is not running — start it with</span>
+        <code>cd manager && npm run dev</code>
+      </p>
+
+      <section id="orbit-section">
+        <div class="orbit-wrap" id="orbit-wrap">
+          <div class="orbit-ring" id="orbit-ring1"></div>
+          <div class="orbit-ring r2" id="orbit-ring2"></div>
+          <button class="orbit-center" id="orbit-center" type="button" aria-label="Grow a new brain">
+            <span class="plus" aria-hidden="true">+</span>
+          </button>
+          <div class="orbit-center-label" id="orbit-center-label" data-i18n="orbit.new">new brain</div>
+          <div class="orbit-card" id="orbit-card"><div class="connector"></div><div id="orbit-card-body"></div></div>
+        </div>
+        <p class="orbit-hint" id="orbit-hint" data-i18n="orbit.hint">click a brain to visit it — click + to grow a new one</p>
+      </section>
+    </main>
+
+    <div class="wizard-overlay hidden" id="wizard-overlay" role="dialog" aria-modal="true">
+      <div class="wizard" id="wizard"></div>
+    </div>
+
+    <script type="module" src="/src/lobby.ts"></script>
+  </body>
+</html>

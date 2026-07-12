@@ -4,9 +4,8 @@
   "description": "A WebGL brain that visualizes FLUJO flows as neurons and their relationships as synapses.",
   "type": "module",
   "scripts": {
-    "gen": "node scripts/generate-data.mjs",
     "dev": "vite",
-    "build": "npm run gen && tsc --noEmit && vite build",
+    "build": "tsc --noEmit && vite build",
     "preview": "vite preview"
   },
   "keywords": [

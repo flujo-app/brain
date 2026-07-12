@@ -1,0 +1,74 @@
+# brain + FLUJO + Ollama in one stack: `docker compose up` →
+#   brain (lobby + viewer) at http://localhost:8080
+#   default FLUJO editor at http://localhost:4200
+#
+# The brain-manager provisions ADDITIONAL FLUJO instances (one per brain) as
+# sibling containers on the brain-net network via the Docker socket. Those
+# instances get no published ports — they are reachable only through the
+# manager's /brains/<id>/flujo proxy.
+#
+# SECURITY: FLUJO has no authentication layer, and its git API executes
+# frontend-supplied commands (RCE-equivalent). All ports are bound to
+# localhost ONLY. The Docker socket mount makes the brain container
+# root-equivalent on this host — do not expose this stack beyond localhost
+# without your own authenticating reverse proxy.
+
+services:
+  brain:
+    build: .
+    ports:
+      - "127.0.0.1:8080:80"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - brain-data:/data
+    environment:
+      - FLUJO_DEFAULT_URL=http://flujo:4200
+      - OLLAMA_URL=http://ollama:11434
+      - FLUJO_IMAGE=ghcr.io/mario-andreschak/flujo:latest
+      - DOCKER_NETWORK=brain-net
+      - MANAGER_INTERNAL_URL=http://brain
+    depends_on:
+      - flujo
+    networks: [brain-net]
+    restart: unless-stopped
+
+  flujo:
+    image: ghcr.io/mario-andreschak/flujo:latest
+    # FLUJO's own UI (flow editor) — localhost only. The editor can't live
+    # behind a sub-path proxy, so it keeps its own port.
+    ports:
+      - "127.0.0.1:4200:4200"
+    volumes:
+      - flujo-db:/app/db
+      - flujo-mcp-servers:/app/mcp-servers
+    # environment:
+    #   # Claude Subscription in-container (generate with `claude setup-token`):
+    #   - CLAUDE_CODE_OAUTH_TOKEN=...
+    networks: [brain-net]
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama
+    volumes:
+      - ollama:/root/.ollama
+    networks: [brain-net]
+    restart: unless-stopped
+    # For GPU acceleration uncomment (NVIDIA Container Toolkit required):
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+
+networks:
+  brain-net:
+    # Fixed name so containers the manager spawns can join it by name.
+    name: brain-net
+
+volumes:
+  flujo-db:
+  flujo-mcp-servers:
+  brain-data:
+  ollama:

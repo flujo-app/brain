@@ -31,6 +31,7 @@ export function createStarfield(count = 1400, radius = 320): Points {
     depthWrite: false,
     blending: AdditiveBlending,
     sizeAttenuation: true,
+    fog: false, // scenery: scene fog would swallow the distant shell
   });
   const pts = new Points(geo, mat);
   pts.renderOrder = -1;

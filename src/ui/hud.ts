@@ -1,6 +1,6 @@
-import type { Neuron, ServerStatus, Synapse, SynapseKind } from '../types';
+import type { InnerNode, Neuron, ServerStatus, Synapse, SynapseKind } from '../types';
 import type { GroupMode } from '../grouping';
-import { SYNAPSE_COLORS, providerLabel } from '../theme';
+import { NODE_TYPE_COLORS, SYNAPSE_COLORS, nodeTypeLabel, providerLabel } from '../theme';
 
 const STATUS_COLORS: Record<ServerStatus, string> = {
   connected: '#35e0d0',
@@ -17,11 +17,23 @@ function esc(s: string): string {
   return s.replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch]!);
 }
 
+/** A little on/off switch row for boolean node settings. */
+function toggleRow(label: string, on: boolean): string {
+  return `<div class="setting"><span class="sw ${on ? 'on' : 'off'}"><i></i></span>${esc(label)}<em>${on ? 'on' : 'off'}</em></div>`;
+}
+
+function promptBlock(title: string, prompt: string | undefined, open: boolean): string {
+  if (!prompt?.trim()) return '';
+  return `<details${open ? ' open' : ''}><summary>${esc(title)}</summary><pre class="prompt">${esc(prompt.trim())}</pre></details>`;
+}
+
 export interface RelationLine {
   synapse: Synapse;
   otherName: string;
   outgoing: boolean;
 }
+
+export type ViewMode = '3d' | '2d';
 
 export class Hud {
   private $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -32,6 +44,13 @@ export class Hud {
   onToggleKind: (k: SynapseKind, on: boolean) => void = () => {};
   onCloseFocus: () => void = () => {};
   onGroupMode: (mode: GroupMode) => void = () => {};
+  onViewMode: (mode: ViewMode) => void = () => {};
+  /** Camera-follow toggle for live execution. */
+  onFollow: (on: boolean) => void = () => {};
+  /** Back from a node detail to the behaviour overview. */
+  onBackToBehaviour: () => void = () => {};
+  /** Jump focus to another behaviour (subflow node link). */
+  onFocusBehaviour: (id: string) => void = () => {};
 
   constructor() {
     const search = this.$<HTMLInputElement>('search');
@@ -50,17 +69,52 @@ export class Hud {
     const group = this.$<HTMLSelectElement>('group-mode');
     group.addEventListener('change', () => this.onGroupMode(group.value as GroupMode));
 
+    const view = this.$<HTMLSelectElement>('view-mode');
+    view.addEventListener('change', () => this.onViewMode(view.value as ViewMode));
+
+    const follow = this.$<HTMLInputElement>('follow-toggle');
+    follow.addEventListener('change', () => this.onFollow(follow.checked));
+
     this.$('panel-close').addEventListener('click', () => this.onCloseFocus());
+  }
+
+  followEnabled(): boolean {
+    return this.$<HTMLInputElement>('follow-toggle').checked;
+  }
+
+  /** Synapse kinds currently enabled in the legend (source of truth: the DOM). */
+  enabledKinds(): Set<SynapseKind> {
+    const set = new Set<SynapseKind>();
+    document.querySelectorAll<HTMLElement>('#legend .syn:not(.off)').forEach((el) => {
+      if (el.dataset.kind) set.add(el.dataset.kind as SynapseKind);
+    });
+    return set;
+  }
+
+  currentGroupMode(): GroupMode {
+    return this.$<HTMLSelectElement>('group-mode').value as GroupMode;
+  }
+
+  /** Show / update / hide the "now thinking" strip. */
+  setActivity(a: { flow: string; detail?: string; runs?: number } | null): void {
+    const el = this.$('activity');
+    if (!a) {
+      el.classList.add('hidden');
+      return;
+    }
+    el.classList.remove('hidden');
+    this.$('activity-text').innerHTML =
+      `<b>${esc(a.flow)}</b>` +
+      (a.detail ? ` <em>· ${esc(a.detail)}</em>` : '') +
+      (a.runs && a.runs > 1 ? ` <em>· ${a.runs} runs</em>` : '');
   }
 
   setGroupMode(mode: GroupMode): void {
     this.$<HTMLSelectElement>('group-mode').value = mode;
   }
 
-  setSource(source: 'live' | 'snapshot'): void {
-    const badge = this.$('source-badge');
-    badge.textContent = source === 'live' ? '● live from FLUJO' : '○ bundled snapshot';
-    badge.classList.toggle('snapshot', source === 'snapshot');
+  setViewMode(mode: ViewMode): void {
+    this.$<HTMLSelectElement>('view-mode').value = mode;
   }
 
   setStats(neurons: number, synapses: number, sections: number): void {
@@ -80,29 +134,113 @@ export class Hud {
     this.tooltip.classList.add('hidden');
   }
 
+  /** The behaviour overview panel. */
   showPanel(n: Neuron, relations: RelationLine[], servers: Record<string, ServerStatus> = {}): void {
+    this.$('p-kicker').innerHTML = '<span class="k">behaviour</span>';
     this.$('p-name').textContent = n.name;
     const desc = this.$('p-desc');
-    desc.textContent = n.description || (n.broken ? 'No connections — a dormant flow.' : '');
+    desc.textContent = n.description || (n.broken ? 'No connections — a dormant behaviour.' : '');
     desc.style.display = desc.textContent ? '' : 'none';
 
     const chips: string[] = [];
     const c = n.counts;
     const parts = [
       c.process && `${c.process} process`,
-      c.mcp && `${c.mcp} mcp`,
-      c.subflow && `${c.subflow} subflow`,
+      c.mcp && `${c.mcp} abilit${c.mcp > 1 ? 'ies' : 'y'}`,
+      c.subflow && `${c.subflow} behaviour call${c.subflow > 1 ? 's' : ''}`,
     ].filter(Boolean);
     chips.push(`<span class="chip"><b>${n.nodeTotal}</b> nodes</span>`);
     for (const p of parts) chips.push(`<span class="chip">${p}</span>`);
     for (const prov of n.providers) chips.push(`<span class="chip">${esc(providerLabel(prov))}</span>`);
     this.$('p-stats').innerHTML = chips.join('');
 
-    this.$('p-rels').innerHTML = this.renderServers(n, servers) + this.renderRelations(n, relations);
+    this.$('p-rels').innerHTML =
+      promptBlock('behaviour prompt', n.prompt, false) +
+      this.renderServers(n, servers) +
+      this.renderRelations(n, relations);
+    this.$('p-hint').textContent = 'Click a node in the graph for its prompt & settings';
     this.panel.classList.remove('hidden');
   }
 
-  /** MCP servers this flow binds, with live status dots. */
+  /** Detail panel for one node inside the focused behaviour. */
+  showNodePanel(
+    behaviour: Neuron,
+    node: InnerNode,
+    servers: Record<string, ServerStatus>,
+    subflowTarget: Neuron | null,
+  ): void {
+    const color = hex(NODE_TYPE_COLORS[node.type]);
+    this.$('p-kicker').innerHTML =
+      `<button class="back" id="p-back">← ${esc(behaviour.name)}</button>` +
+      `<span class="k" style="color:${color}">${nodeTypeLabel(node.type)} node</span>`;
+    this.$('p-name').textContent = node.label;
+    const desc = this.$('p-desc');
+    desc.textContent = '';
+    desc.style.display = 'none';
+
+    const chips: string[] = [];
+    if (node.modelName) chips.push(`<span class="chip">model <b>${esc(node.modelName)}</b></span>`);
+    if (node.type === 'mcp' && node.server) {
+      const s = servers[node.server] ?? 'unknown';
+      chips.push(
+        `<span class="chip"><span class="dot" style="color:${STATUS_COLORS[s]};background:${STATUS_COLORS[s]}"></span>${esc(node.server)} · ${s}</span>`,
+      );
+    }
+    this.$('p-stats').innerHTML = chips.join('');
+
+    let body = '';
+    if (node.type === 'process') {
+      body += `<div class="settings">
+        ${toggleRow('include model prompt', node.excludeModelPrompt !== true)}
+        ${toggleRow('include behaviour prompt', node.excludeStartNodePrompt !== true)}
+      </div>`;
+      body += promptBlock('prompt', node.prompt, true) ||
+        '<p class="empty">No prompt set on this node.</p>';
+      if (node.abilities?.length) {
+        const items = node.abilities
+          .map((a) => {
+            const s = servers[a.server] ?? 'unknown';
+            const tools = a.tools.length
+              ? `<div class="tools">${a.tools.map((t) => `<span>${esc(t)}</span>`).join('')}</div>`
+              : '';
+            return `<li><span class="dot" style="color:${STATUS_COLORS[s]};background:${STATUS_COLORS[s]}"></span><b>${esc(a.server)}</b> <em class="status">${a.tools.length} tools</em>${tools}</li>`;
+          })
+          .join('');
+        body += `<details><summary>abilities <b>${node.abilities.length}</b></summary><ul>${items}</ul></details>`;
+      }
+    } else if (node.type === 'mcp') {
+      const tools = node.enabledTools ?? [];
+      body += tools.length
+        ? `<details open><summary>enabled tools <b>${tools.length}</b></summary><div class="tools pad">${tools.map((t) => `<span>${esc(t)}</span>`).join('')}</div></details>`
+        : '<p class="empty">No tools enabled.</p>';
+    } else if (node.type === 'subflow') {
+      body += `<div class="settings">
+        ${node.inputMode ? `<div class="setting"><span class="mode">in</span>${esc(node.inputMode)}</div>` : ''}
+        ${node.outputMode ? `<div class="setting"><span class="mode">out</span>${esc(node.outputMode)}</div>` : ''}
+      </div>`;
+      body += subflowTarget
+        ? `<p class="jump">calls <a href="#" id="p-jump">${esc(subflowTarget.name)}</a></p>` +
+          promptBlock('target behaviour prompt', subflowTarget.prompt, false)
+        : '<p class="empty">Target behaviour not found.</p>';
+    } else if (node.type === 'finish') {
+      body += '<p class="empty">End of the behaviour — the reply is returned here.</p>';
+    }
+
+    this.$('p-rels').innerHTML = body;
+    this.$('p-hint').textContent = 'Esc or ← to go back · click empty space for overview';
+    this.panel.classList.remove('hidden');
+
+    document.getElementById('p-back')?.addEventListener('click', () => this.onBackToBehaviour());
+    const jump = document.getElementById('p-jump');
+    if (jump && subflowTarget) {
+      jump.addEventListener('click', (e) => {
+        e.preventDefault();
+        this.onFocusBehaviour(subflowTarget.id);
+      });
+    }
+  }
+
+  /** Abilities this behaviour binds, with live status dots. */
   private renderServers(n: Neuron, servers: Record<string, ServerStatus>): string {
     if (!n.servers.length) return '';
     const items = n.servers
@@ -111,7 +249,7 @@ export class Hud {
         return `<li><span class="dot" style="color:${STATUS_COLORS[s]};background:${STATUS_COLORS[s]}"></span>${esc(name)} <em class="status">${s}</em></li>`;
       })
       .join('');
-    return `<details open><summary>mcp servers <b>${n.servers.length}</b></summary><ul>${items}</ul></details>`;
+    return `<details open><summary>abilities <b>${n.servers.length}</b></summary><ul>${items}</ul></details>`;
   }
 
   /** Connections grouped by kind into collapsible sections. */
@@ -121,8 +259,8 @@ export class Hud {
     }
 
     const KINDS: Array<{ kind: SynapseKind; title: string; open: boolean }> = [
-      { kind: 'subflow', title: 'subflow calls', open: true },
-      { kind: 'server', title: 'shared mcp servers', open: false },
+      { kind: 'subflow', title: 'behaviour calls', open: true },
+      { kind: 'server', title: 'shared abilities', open: false },
       { kind: 'model', title: 'shared models', open: false },
     ];
 

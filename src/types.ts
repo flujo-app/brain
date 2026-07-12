@@ -37,41 +37,57 @@ export interface ModelInfo {
 }
 
 /**
- * MCP server state. `connected`/`disconnected` come from a live FLUJO;
- * a snapshot only knows `disabled` vs `unknown` (configured, state unknowable).
+ * MCP server (ability) state, from the running FLUJO instance. `unknown` is
+ * the lookup fallback for servers FLUJO didn't report on.
  */
 export type ServerStatus = 'connected' | 'disconnected' | 'disabled' | 'unknown';
 
-export interface BrainSnapshot {
-  generatedAt: string | null;
-  source: string;
-  models: Record<string, ModelInfo>;
-  servers?: Record<string, { status: ServerStatus }>;
-  flows: RawFlow[];
-}
-
 // ---- Distilled "brain" model ----
 
-/** A single node inside a flow, kept for the expanded inner view. */
+/** An ability (MCP server) bound to a process node, with its enabled tools. */
+export interface BoundAbility {
+  server: string;
+  tools: string[];
+}
+
+/** A single node inside a behaviour, kept for the expanded inner view. */
 export interface InnerNode {
   id: string;
   type: NodeType;
   label: string;
-  /** For mcp nodes: the bound MCP server name (status lookup). */
+  /** For mcp nodes: the bound ability (MCP server) name (status lookup). */
   server?: string;
   /** Normalized position in [-1, 1] derived from the flow editor layout. */
   x: number;
   y: number;
+  /** Process nodes: the node's prompt template. */
+  prompt?: string;
+  /** Process nodes: resolved model name shown in the detail panel. */
+  modelName?: string;
+  /** Process nodes: prompt-composition settings. */
+  excludeModelPrompt?: boolean;
+  excludeStartNodePrompt?: boolean;
+  /** Process nodes: abilities wired into this node. */
+  abilities?: BoundAbility[];
+  /** Mcp nodes: tools enabled on the bound ability. */
+  enabledTools?: string[];
+  /** Subflow nodes: the behaviour this node calls, and how data flows. */
+  subflowId?: string;
+  inputMode?: string;
+  outputMode?: string;
 }
 
-/** One flow = one neuron. */
+/** One behaviour (FLUJO flow) = one neuron. */
 export interface Neuron {
   id: string;
   name: string;
   description: string;
   folder: string;
   counts: Record<NodeType, number>;
+  /** Node count excluding start nodes (they are hidden from the viz). */
   nodeTotal: number;
+  /** The behaviour-level prompt, taken from the start node. */
+  prompt?: string;
   /** Resolved model provider names actually used (process nodes). */
   providers: string[];
   modelNames: string[];
@@ -102,7 +118,6 @@ export interface Synapse {
 export interface BrainGraph {
   neurons: Neuron[];
   synapses: Synapse[];
-  /** MCP server name -> current status. */
+  /** Ability (MCP server) name -> current status. */
   servers: Record<string, ServerStatus>;
-  source: 'live' | 'snapshot';
 }

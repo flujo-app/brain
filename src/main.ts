@@ -1,36 +1,108 @@
 import './style.css';
-import { loadBrain, watchBrain } from './data/loader';
+import { fetchBrain, watchBrain } from './data/loader';
+import { ExecutionWatcher, type BrainActivityEvent } from './data/execution';
 import { Brain } from './scene/brain';
+import { Brain2D } from './scene2d/brain2d';
+import { Hud, type ViewMode } from './ui/hud';
+import type { BrainGraph } from './types';
 
-async function boot() {
-  const canvas = document.getElementById('scene') as HTMLCanvasElement;
+const VIEW_KEY = 'brain-view';
+
+function setBadge(text: string, connected: boolean) {
+  const badge = document.getElementById('source-badge');
+  if (!badge) return;
+  badge.textContent = text;
+  badge.classList.toggle('snapshot', !connected);
+}
+
+function webglAvailable(): boolean {
   try {
-    let { graph, hash } = await loadBrain();
-    if (!graph.neurons.length) {
-      showMessage('No flows found. Build a flow in FLUJO, then reload.');
-      return;
-    }
-    const brain = new Brain(canvas, graph);
-
-    // Keep the brain in sync with a running FLUJO: new/edited flows, new MCP
-    // servers, and connection-state changes appear without a reload — and a
-    // snapshot upgrades itself to live the moment FLUJO becomes reachable.
-    watchBrain(
-      () => hash,
-      (data) => {
-        hash = data.hash;
-        brain.setGraph(data.graph);
-      },
-    );
-  } catch (err) {
-    console.error(err);
-    showMessage('Could not load flow data. See the console for details.');
+    const probe = document.createElement('canvas');
+    return !!(probe.getContext('webgl2') ?? probe.getContext('webgl'));
+  } catch {
+    return false;
   }
 }
 
-function showMessage(text: string) {
-  const badge = document.getElementById('source-badge');
-  if (badge) badge.textContent = text;
+/** Saved choice wins; otherwise weak/GL-less hardware starts in the 2D view. */
+function initialMode(): ViewMode {
+  const saved = localStorage.getItem(VIEW_KEY);
+  if (saved === '2d' || saved === '3d') return saved;
+  if (!webglAvailable()) return '2d';
+  if ((navigator.hardwareConcurrency ?? 8) <= 4) return '2d';
+  return '3d';
+}
+
+/**
+ * A canvas that has held a WebGL context can never hand out a 2D one (and
+ * vice versa), so every renderer switch starts from a fresh element.
+ */
+function freshCanvas(): HTMLCanvasElement {
+  const old = document.getElementById('scene') as HTMLCanvasElement;
+  const next = document.createElement('canvas');
+  next.id = 'scene';
+  old.replaceWith(next);
+  return next;
+}
+
+async function boot() {
+  const hud = new Hud();
+  let mode = initialMode();
+  let brain: Brain | Brain2D | null = null;
+  let graph: BrainGraph | null = null;
+  let hash: string | null = null;
+
+  hud.setViewMode(mode);
+
+  const createRenderer = () => {
+    if (!graph) return;
+    brain?.dispose();
+    const canvas = freshCanvas();
+    brain = mode === '2d' ? new Brain2D(canvas, graph, hud) : new Brain(canvas, graph, hud);
+  };
+
+  // The view toggle swaps whole renderers: real WebGL vs. real Canvas 2D.
+  // (Renderers wire the rest of the HUD themselves; this callback is ours.)
+  hud.onViewMode = (m) => {
+    if (m === mode) return;
+    mode = m;
+    localStorage.setItem(VIEW_KEY, m);
+    createRenderer();
+  };
+
+  const apply = (data: { graph: BrainGraph; hash: string }) => {
+    hash = data.hash;
+    graph = data.graph;
+    if (brain) brain.setGraph(graph);
+    else createRenderer();
+    setBadge('● live from FLUJO', true);
+  };
+
+  const first = await fetchBrain();
+  if (first) apply(first);
+  else setBadge('○ waiting for FLUJO…', false);
+
+  // Keep polling: first contact boots the brain, later changes rebuild it.
+  // Everything lives in memory only — a reload starts from scratch.
+  watchBrain(
+    () => hash,
+    (data) => apply(data),
+  );
+
+  // Live execution: watch running conversations and feed events to the scene.
+  new ExecutionWatcher((e) => brain?.handleExecution(e)).start();
+
+  // If a brain-manager is serving us, offer the lobby.
+  fetch('/api/health')
+    .then((r) => {
+      if (r.ok) document.getElementById('lobby-link')?.classList.remove('hidden');
+    })
+    .catch(() => undefined);
+
+  // Dev hook: simulate execution events from the console without spending
+  // real model tokens, e.g. __brainSim({kind:'run-start', conversationId:'x', flowId:'<id>'}).
+  (window as unknown as { __brainSim?: (e: BrainActivityEvent) => void }).__brainSim = (e) =>
+    brain?.handleExecution(e);
 }
 
 boot();

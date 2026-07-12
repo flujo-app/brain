@@ -22,21 +22,39 @@ export function providerColor(providers: string[]): Color {
   return new Color(PROVIDER_COLORS[providers[0]] ?? NEUTRAL);
 }
 
+/**
+ * Synapse hues follow FLUJO's editor: subflow nodes are amber (warning),
+ * MCP/ability nodes are blue (info). Shared model gets its own violet.
+ */
 export const SYNAPSE_COLORS: Record<SynapseKind, number> = {
-  subflow: 0xffd24a, // bright gold axon — the strongest tie
-  server: 0x35e0d0, // teal — shared MCP tooling
-  model: 0x7d7bff, // indigo — shared model
+  subflow: 0xf59e0b, // amber axon — the strongest tie
+  server: 0x4d8df6, // blue — shared MCP tooling
+  model: 0xa78bfa, // violet — shared model
 };
 
+/** FLUJO's own node palette (brightened for additive glow on dark). */
 export const NODE_TYPE_COLORS: Record<NodeType, number> = {
-  start: 0x5cf2a0,
-  process: 0xff8a3d,
-  mcp: 0x35e0d0,
-  subflow: 0xffd24a,
-  finish: 0xff5c8a,
+  start: 0xa1887f, // brown, as in FLUJO
+  process: 0x9aa7b8, // grey (FLUJO secondary)
+  mcp: 0x4d8df6, // blue (FLUJO info)
+  subflow: 0xf59e0b, // amber (FLUJO warning)
+  finish: 0x4ade80, // green (FLUJO success)
 };
 
 export const BACKGROUND = 0x05070f;
+
+/** UI vocabulary: flows are "behaviours", MCP servers are "abilities". */
+export const NODE_TYPE_LABELS: Record<NodeType, string> = {
+  start: 'start',
+  process: 'process',
+  mcp: 'ability',
+  subflow: 'behaviour',
+  finish: 'finish',
+};
+
+export function nodeTypeLabel(t: NodeType): string {
+  return NODE_TYPE_LABELS[t];
+}
 
 export function providerLabel(p: string): string {
   return p.replace('claude-subscription', 'claude').replace(/-/g, ' ');

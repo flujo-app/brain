@@ -1,10 +1,7 @@
 import {
-  BufferGeometry,
   Clock,
-  Float32BufferAttribute,
+  FogExp2,
   Group,
-  LineBasicMaterial,
-  LineSegments,
   PerspectiveCamera,
   Raycaster,
   Scene,
@@ -17,18 +14,22 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 
-import type { BrainGraph, SynapseKind } from '../types';
-import { BACKGROUND } from '../theme';
+import type { BrainGraph, Neuron, SynapseKind } from '../types';
+import { BACKGROUND, nodeTypeLabel } from '../theme';
 import { groupNeurons, type GroupMode } from '../grouping';
 import { computeSectionedLayout, type SectionedLayout } from '../layout/sectionedLayout';
 import { createStarfield } from './starfield';
-import { createNebulae } from './nebula';
-import { InnerNodeLabels, SectionLabels } from './labels';
+import { createNebulae, setNebulaeDim } from './nebula';
+import { FlowNodeLabels, SectionLabels } from './labels';
+import { FlowGraph } from './flowGraph';
 import { StarField } from './stars';
 import { SynapseField } from './synapses';
-import { Hud, type RelationLine } from '../ui/hud';
+import type { Hud, RelationLine } from '../ui/hud';
+import type { BrainActivityEvent } from '../data/execution';
 
 const FOV = 55;
+const BLOOM_OVERVIEW = 0.32;
+const BLOOM_FOCUS = 0.08;
 
 export class Brain {
   private renderer: WebGLRenderer;
@@ -48,25 +49,47 @@ export class Brain {
   private synapses!: SynapseField;
   private layout!: SectionedLayout;
   private labels?: SectionLabels;
-  private innerLabels?: InnerNodeLabels;
-  private focusWiring: LineSegments | null = null;
+  private nebulae!: Group;
 
-  private hud = new Hud();
-  private kindsEnabled = new Set<SynapseKind>(['subflow', 'server']);
-  private groupMode: GroupMode = 'provider';
+  // Focused-behaviour graph view.
+  private flowGraph: FlowGraph | null = null;
+  private flowLabels: FlowNodeLabels | null = null;
+  private selectedNodeId: string | null = null;
+  private hoveredNodeId: string | null = null;
+
+  private kindsEnabled: Set<SynapseKind>;
+  private groupMode: GroupMode;
 
   private focusId: string | null = null;
   private searchSet: Set<string> | null = null;
   private hoveredId: string | null = null;
   private dirty = true; // recolour synapses / spotlight on next frame
 
+  // Live execution state (fed by the ExecutionWatcher).
+  /** flowId -> wake-glow level; pulses while running, decays afterwards. */
+  private glow = new Map<string, number>();
+  /** conversationId -> behaviours currently executing in it. */
+  private convFlows = new Map<string, Set<string>>();
+  private followExec = true;
+  private hudActivity: { flowId: string | null; detail?: string } | null = null;
+
   private targetLookAt = new Vector3();
   /** Desired camera position while flying in/out of a focus; null = free. */
   private camGoal: Vector3 | null = null;
   private focusLerp = 1;
   private overviewDist = 100;
+  private bloomTarget = BLOOM_OVERVIEW;
 
-  constructor(private canvas: HTMLCanvasElement, private graph: BrainGraph) {
+  private onWindowResize = () => this.resize();
+  private onKeyDown = (e: KeyboardEvent) => {
+    if (e.key !== 'Escape') return;
+    if (this.selectedNodeId) this.selectNode(null);
+    else this.clearFocus();
+  };
+
+  constructor(private canvas: HTMLCanvasElement, private graph: BrainGraph, private hud: Hud) {
+    this.kindsEnabled = hud.enabledKinds();
+    this.groupMode = hud.currentGroupMode();
     this.renderer = new WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
     this.renderer.setClearColor(BACKGROUND, 1);
@@ -79,13 +102,18 @@ export class Brain {
     this.controls.rotateSpeed = 0.55;
     this.controls.autoRotate = true;
     this.controls.autoRotateSpeed = 0.28;
+    this.controls.screenSpacePanning = true;
+
+    // Depth cue: the far side of the brain recedes into the dark. The
+    // background starfield opts out (fog would swallow it entirely).
+    this.scene.fog = new FogExp2(BACKGROUND, 0.003);
 
     this.scene.add(createStarfield(1600, 900));
     this.scene.add(this.content);
 
     this.composer = new EffectComposer(this.renderer);
     this.composer.addPass(new RenderPass(this.scene, this.camera));
-    this.bloom = new UnrealBloomPass(new Vector2(1, 1), 0.7, 0.5, 0.5);
+    this.bloom = new UnrealBloomPass(new Vector2(1, 1), BLOOM_OVERVIEW, 0.4, 0.55);
     this.composer.addPass(this.bloom);
 
     this.raycaster.params.Points = { threshold: 2.6 };
@@ -95,25 +123,45 @@ export class Brain {
     this.frameCameraToBrain();
     this.wireHud();
     this.wireInput();
-    window.addEventListener('resize', () => this.resize());
+    window.addEventListener('resize', this.onWindowResize);
 
-    this.hud.setSource(graph.source);
     this.hud.setStats(graph.neurons.length, graph.synapses.length, this.currentGroupCount());
-    this.hud.setGroupMode(this.groupMode);
 
-    // Deep link: ?focus=<flow name or id> jumps straight into a neuron.
+    // Deep link: ?focus=<behaviour name or id> jumps straight into it.
     const wanted = new URLSearchParams(location.search).get('focus')?.toLowerCase();
     if (wanted) {
       const match = graph.neurons.find((n) => n.id === wanted || n.name.toLowerCase() === wanted)
         ?? graph.neurons.find((n) => n.name.toLowerCase().includes(wanted));
       if (match) this.setFocus(match.id);
     }
+    // Keep an active search filter across a renderer switch.
+    const q = (document.getElementById('search') as HTMLInputElement | null)?.value.trim().toLowerCase();
+    if (q) this.applySearch(q);
 
     this.renderer.setAnimationLoop(() => this.frame());
   }
 
+  /** Tear down GL resources and listeners so a 2D renderer can take over. */
+  dispose(): void {
+    this.renderer.setAnimationLoop(null);
+    window.removeEventListener('resize', this.onWindowResize);
+    window.removeEventListener('keydown', this.onKeyDown);
+    this.clearContent();
+    this.controls.dispose();
+    this.composer.dispose();
+    this.renderer.dispose();
+    this.renderer.forceContextLoss();
+    this.hud.hideTooltip();
+    this.hud.setActivity(null);
+    this.hud.hidePanel();
+  }
+
   private currentGroupCount(): number {
     return groupNeurons(this.graph.neurons, this.groupMode).groups.length;
+  }
+
+  private focusedNeuron(): Neuron | null {
+    return this.focusId ? this.graph.neurons.find((n) => n.id === this.focusId) ?? null : null;
   }
 
   /** (Re)build all group-dependent scene content. */
@@ -125,9 +173,10 @@ export class Brain {
     this.stars = new StarField(this.graph, grouping, this.layout);
     this.synapses = new SynapseField(this.graph, this.layout.positions);
     this.labels = new SectionLabels(grouping, this.layout);
+    this.nebulae = createNebulae(grouping, this.layout);
 
     this.content.add(
-      createNebulae(grouping, this.layout),
+      this.nebulae,
       this.synapses.lines,
       this.synapses.pulses,
       this.stars.satellites,
@@ -148,18 +197,15 @@ export class Brain {
     this.hoveredId = null;
     this.hud.hidePanel();
     this.build();
-    this.hud.setSource(graph.source);
     this.hud.setStats(graph.neurons.length, graph.synapses.length, this.currentGroupCount());
-    // Restore focus if that flow still exists after the refresh.
+    // Restore focus if that behaviour still exists after the refresh.
     if (hadFocus && graph.neurons.some((n) => n.id === hadFocus)) this.setFocus(hadFocus);
   }
 
   private clearContent(): void {
-    this.clearFocusWiring();
+    this.clearFlowGraph();
     this.labels?.dispose();
     this.labels = undefined;
-    this.innerLabels?.dispose();
-    this.innerLabels = undefined;
     for (const child of [...this.content.children]) {
       this.content.remove(child);
       child.traverse?.((o) => {
@@ -180,6 +226,11 @@ export class Brain {
     this.controls.minDistance = 3;
     this.controls.maxDistance = dist * 3;
     this.camera.updateProjectionMatrix();
+
+    // Scale the depth fade to the brain's actual size.
+    const density = 0.5 / dist;
+    (this.scene.fog as FogExp2).density = density;
+    this.stars.setFog(density);
   }
 
   private resize(): void {
@@ -201,18 +252,32 @@ export class Brain {
     };
     this.hud.onCloseFocus = () => this.clearFocus();
     this.hud.onSearch = (q) => this.applySearch(q);
+    this.hud.onBackToBehaviour = () => this.selectNode(null);
+    this.hud.onFocusBehaviour = (id) => {
+      if (this.graph.neurons.some((n) => n.id === id)) this.setFocus(id);
+    };
     this.hud.onGroupMode = (mode) => {
       if (mode === this.groupMode) return;
       this.groupMode = mode;
-      this.focusId = null;
-      this.searchSet = null;
-      this.hoveredId = null;
-      this.hud.hidePanel();
-      this.build();
-      this.frameCameraToBrain();
-      this.controls.autoRotate = true;
+      this.resetToOverview();
       this.hud.setStats(this.graph.neurons.length, this.graph.synapses.length, this.currentGroupCount());
     };
+    this.hud.onFollow = (on) => {
+      this.followExec = on;
+    };
+    this.followExec = this.hud.followEnabled();
+  }
+
+  /** Full rebuild + camera reset after a grouping or view-mode change. */
+  private resetToOverview(): void {
+    this.focusId = null;
+    this.searchSet = null;
+    this.hoveredId = null;
+    this.hud.hidePanel();
+    this.build();
+    this.frameCameraToBrain();
+    this.controls.autoRotate = true;
+    this.bloomTarget = BLOOM_OVERVIEW;
   }
 
   private wireInput(): void {
@@ -233,13 +298,29 @@ export class Brain {
     this.canvas.addEventListener('pointerdown', (e) => downAt.set(e.clientX, e.clientY));
     this.canvas.addEventListener('pointerup', (e) => {
       if (downAt.distanceTo(new Vector2(e.clientX, e.clientY)) > 6) return;
-      const id = this.pick();
-      if (id) this.setFocus(id);
-      else this.clearFocus();
+      this.handleClick();
     });
+    window.addEventListener('keydown', this.onKeyDown);
   }
 
-  private pick(): string | null {
+  private handleClick(): void {
+    this.raycaster.setFromCamera(this.pointer, this.camera);
+
+    // Inside a focused behaviour, its graph nodes get first pick.
+    if (this.flowGraph) {
+      const nodeId = this.flowGraph.pick(this.raycaster);
+      if (nodeId) {
+        this.selectNode(nodeId);
+        return;
+      }
+    }
+
+    const id = this.pickCore();
+    if (id && id !== this.focusId) this.setFocus(id);
+    else if (!id) this.clearFocus();
+  }
+
+  private pickCore(): string | null {
     this.raycaster.setFromCamera(this.pointer, this.camera);
     const hits = this.raycaster.intersectObject(this.stars.cores, false);
     if (!hits.length || hits[0].index == null) return null;
@@ -273,36 +354,67 @@ export class Brain {
   private setFocus(id: string): void {
     this.focusId = id;
     this.searchSet = null;
+    this.selectedNodeId = null;
+    this.hoveredNodeId = null;
     this.controls.autoRotate = false;
-    this.showFocusWiring(id);
+    this.bloomTarget = BLOOM_FOCUS;
+    // Clear the stage: galaxy clouds and section names recede behind the graph.
+    setNebulaeDim(this.nebulae, 0.12);
+    this.labels?.setHidden(true);
 
     const neuron = this.graph.neurons.find((n) => n.id === id)!;
-    const home = this.layout.positions.get(id);
-    if (home) {
-      this.targetLookAt.copy(home);
-      // Fly the camera in close enough that the flow's inner constellation
-      // fills the view: distance scales with the neuron's satellite spread.
-      const spread = Math.sqrt(neuron.nodeTotal) * 2.2 + 8;
-      const dir = this.camera.position.clone().sub(home);
-      if (dir.lengthSq() < 0.01) dir.set(0, 0.3, 1);
-      this.camGoal = home.clone().addScaledVector(dir.normalize(), spread);
-      this.focusLerp = 0;
-    }
+    const home = this.layout.positions.get(id) ?? new Vector3();
 
-    this.innerLabels?.dispose();
-    this.innerLabels = new InnerNodeLabels(neuron, this.stars.innerWorld.get(id) ?? new Map(), this.graph.servers);
+    // Replace the glowing star with the behaviour's actual graph, oriented
+    // toward the camera, then fly in to frame it head-on.
+    this.clearFlowGraph();
+    this.flowGraph = new FlowGraph(neuron, this.graph.servers);
+    this.flowGraph.group.position.copy(home);
+    this.flowGraph.group.quaternion.copy(this.camera.quaternion);
+    this.content.add(this.flowGraph.group);
+    this.flowLabels = new FlowNodeLabels(neuron, this.flowGraph, (nodeId) => this.selectNode(nodeId));
+
+    this.targetLookAt.copy(home);
+    const halfV = Math.tan((FOV * Math.PI) / 360);
+    const dist = Math.max(
+      (this.flowGraph.halfHeight * 1.25) / halfV,
+      (this.flowGraph.halfWidth * 1.25) / (halfV * this.camera.aspect),
+      10,
+    );
+    const normal = new Vector3(0, 0, 1).applyQuaternion(this.camera.quaternion);
+    this.camGoal = home.clone().addScaledVector(normal, dist);
+    this.focusLerp = 0;
+
     this.hud.showPanel(neuron, this.relationsOf(id), this.graph.servers);
     this.dirty = true;
+  }
+
+  /** Select a node inside the focused behaviour (null returns to overview panel). */
+  private selectNode(nodeId: string | null): void {
+    const neuron = this.focusedNeuron();
+    if (!neuron || !this.flowGraph) return;
+    this.selectedNodeId = nodeId;
+    this.flowGraph.setSelected(nodeId);
+    if (!nodeId) {
+      this.hud.showPanel(neuron, this.relationsOf(neuron.id), this.graph.servers);
+      return;
+    }
+    const node = neuron.inner.nodes.find((n) => n.id === nodeId);
+    if (!node) return;
+    const target = node.subflowId ? this.graph.neurons.find((n) => n.id === node.subflowId) ?? null : null;
+    this.hud.showNodePanel(neuron, node, this.graph.servers, target);
   }
 
   private clearFocus(): void {
     if (!this.focusId && !this.searchSet) return;
     this.focusId = null;
     this.searchSet = null;
+    this.selectedNodeId = null;
     this.controls.autoRotate = true;
-    this.clearFocusWiring();
-    this.innerLabels?.dispose();
-    this.innerLabels = undefined;
+    this.bloomTarget = BLOOM_OVERVIEW;
+    setNebulaeDim(this.nebulae, 1);
+    this.labels?.setHidden(false);
+    this.clearFlowGraph();
     this.hud.hidePanel();
     this.targetLookAt.set(0, 0, 0);
     // Fly back out to the overview along the current view direction.
@@ -314,37 +426,116 @@ export class Brain {
     this.dirty = true;
   }
 
+  /**
+   * Live execution event from the watcher (or the __brainSim debug hook).
+   * Wakes neurons, flashes subflow axons, lights the active node in a focused
+   * behaviour, and (with follow on) flies the camera to the executing flow.
+   */
+  handleExecution(e: BrainActivityEvent): void {
+    switch (e.kind) {
+      case 'run-start':
+        this.touchFlow(e.conversationId, e.flowId);
+        this.hudActivity = { flowId: e.flowId };
+        this.followTo(e.flowId);
+        break;
+      case 'subflow-start':
+        if (e.flowId && e.subflowId) this.synapses.flash(e.flowId, e.subflowId);
+        this.touchFlow(e.conversationId, e.subflowId ?? null);
+        this.hudActivity = { flowId: e.subflowId ?? e.flowId };
+        this.followTo(e.subflowId ?? null);
+        break;
+      case 'subflow-done':
+        if (e.subflowId) this.convFlows.get(e.conversationId)?.delete(e.subflowId);
+        this.hudActivity = { flowId: e.flowId };
+        break;
+      case 'node-enter':
+        this.touchFlow(e.conversationId, e.flowId);
+        if (e.flowId && this.focusId === e.flowId) this.flowGraph?.setActive(e.node?.nodeId ?? null);
+        this.hudActivity = { flowId: e.flowId, detail: e.node?.nodeName ?? undefined };
+        break;
+      case 'node-exit':
+        // Keep the highlight until the next node lights up.
+        break;
+      case 'tool-call':
+        this.touchFlow(e.conversationId, e.flowId);
+        this.hudActivity = { flowId: e.flowId, detail: e.toolName ? `tool ${e.toolName}` : undefined };
+        break;
+      case 'run-done':
+        this.convFlows.delete(e.conversationId);
+        this.flowGraph?.setActive(null);
+        if (!this.convFlows.size) this.hudActivity = null;
+        break;
+    }
+    this.refreshActivityHud();
+  }
+
+  /** Note a behaviour as actively executing in a conversation. */
+  private touchFlow(conversationId: string, flowId: string | null): void {
+    if (!flowId || !this.graph.neurons.some((n) => n.id === flowId)) return;
+    if (!this.convFlows.has(conversationId)) this.convFlows.set(conversationId, new Set());
+    this.convFlows.get(conversationId)!.add(flowId);
+    this.glow.set(flowId, 1);
+  }
+
+  /** Fly the camera to the executing behaviour when follow is on. */
+  private followTo(flowId: string | null): void {
+    if (!this.followExec || !flowId || flowId === this.focusId) return;
+    if (!this.graph.neurons.some((n) => n.id === flowId)) return;
+    this.setFocus(flowId);
+  }
+
+  private refreshActivityHud(): void {
+    if (!this.convFlows.size || !this.hudActivity) {
+      this.hud.setActivity(null);
+      return;
+    }
+    const flow = this.hudActivity.flowId
+      ? this.graph.neurons.find((n) => n.id === this.hudActivity!.flowId)?.name
+      : undefined;
+    this.hud.setActivity({
+      flow: flow ?? 'thinking…',
+      detail: this.hudActivity.detail,
+      runs: this.convFlows.size,
+    });
+  }
+
+  /** Pulse running behaviours, decay finished ones, push to the star shader. */
+  private updateGlow(dt: number, t: number): void {
+    if (!this.glow.size) return;
+    const running = new Set<string>();
+    for (const flows of this.convFlows.values()) for (const f of flows) running.add(f);
+    for (const [id, level] of this.glow) {
+      if (running.has(id)) {
+        this.glow.set(id, 0.8 + 0.2 * Math.sin(t * 3.2));
+      } else {
+        const next = level * Math.exp(-dt * 1.1);
+        if (next < 0.02) this.glow.delete(id);
+        else this.glow.set(id, next);
+      }
+    }
+    // The focused behaviour's star is hidden behind its flow graph — don't
+    // let its wake glow bleed through.
+    if (this.focusId && this.glow.has(this.focusId)) {
+      const masked = new Map(this.glow);
+      masked.delete(this.focusId);
+      this.stars.setBoost(masked);
+    } else {
+      this.stars.setBoost(this.glow);
+    }
+  }
+
+  private clearFlowGraph(): void {
+    this.flowGraph?.dispose();
+    this.flowGraph = null;
+    this.flowLabels?.dispose();
+    this.flowLabels = null;
+    this.hoveredNodeId = null;
+  }
+
   private applySearch(q: string): void {
     if (this.focusId) this.clearFocus();
     this.searchSet = q ? new Set(this.graph.neurons.filter((n) => n.name.toLowerCase().includes(q)).map((n) => n.id)) : null;
     this.dirty = true;
-  }
-
-  /** Draw the focused flow's internal node wiring as a thin overlay. */
-  private showFocusWiring(id: string): void {
-    this.clearFocusWiring();
-    const inner = this.stars.innerWorld.get(id);
-    const neuron = this.graph.neurons.find((n) => n.id === id);
-    if (!inner || !neuron) return;
-    const verts: number[] = [];
-    for (const e of neuron.inner.edges) {
-      const a = inner.get(e.source);
-      const b = inner.get(e.target);
-      if (a && b) verts.push(a.x, a.y, a.z, b.x, b.y, b.z);
-    }
-    if (!verts.length) return;
-    const geo = new BufferGeometry();
-    geo.setAttribute('position', new Float32BufferAttribute(verts, 3));
-    this.focusWiring = new LineSegments(geo, new LineBasicMaterial({ color: 0xcfe0ff, transparent: true, opacity: 0.7 }));
-    this.content.add(this.focusWiring);
-  }
-
-  private clearFocusWiring(): void {
-    if (!this.focusWiring) return;
-    this.content.remove(this.focusWiring);
-    this.focusWiring.geometry.dispose();
-    (this.focusWiring.material as LineBasicMaterial).dispose();
-    this.focusWiring = null;
   }
 
   private activeEdgesFor(visible: Set<string>, requireBoth: boolean): Set<number> {
@@ -357,37 +548,66 @@ export class Brain {
     return set;
   }
 
+  private updateHover(): void {
+    if (!this.hasPointer) return;
+    this.raycaster.setFromCamera(this.pointer, this.camera);
+
+    if (this.focusId && this.flowGraph) {
+      const nodeId = this.flowGraph.pick(this.raycaster);
+      if (nodeId !== this.hoveredNodeId) {
+        this.hoveredNodeId = nodeId;
+        this.flowGraph.setHover(nodeId);
+        this.canvas.style.cursor = nodeId ? 'pointer' : 'default';
+      }
+      if (nodeId) {
+        const node = this.focusedNeuron()?.inner.nodes.find((n) => n.id === nodeId);
+        if (node) {
+          this.hud.showTooltip(
+            `${node.label} · ${nodeTypeLabel(node.type)}`,
+            (this.pointer.x * 0.5 + 0.5) * window.innerWidth,
+            (-this.pointer.y * 0.5 + 0.5) * window.innerHeight,
+          );
+        }
+      } else {
+        this.hud.hideTooltip();
+      }
+      return;
+    }
+
+    const id = this.pickCore();
+    if (id !== this.hoveredId) {
+      this.hoveredId = id;
+      this.canvas.style.cursor = id ? 'pointer' : 'default';
+      this.dirty = true;
+    }
+    if (id) {
+      const n = this.graph.neurons.find((x) => x.id === id)!;
+      this.hud.showTooltip(
+        `${n.name} · ${n.nodeTotal} nodes`,
+        (this.pointer.x * 0.5 + 0.5) * window.innerWidth,
+        (-this.pointer.y * 0.5 + 0.5) * window.innerHeight,
+      );
+    } else {
+      this.hud.hideTooltip();
+    }
+  }
+
   private frame(): void {
     const dt = this.clock.getDelta();
     const t = this.clock.elapsedTime;
     this.controls.update();
     this.stars.setTime(t);
     this.synapses.animate(t);
-
-    // Hover (only when nothing is focused).
-    if (this.hasPointer && !this.focusId) {
-      const id = this.pick();
-      if (id !== this.hoveredId) {
-        this.hoveredId = id;
-        this.canvas.style.cursor = id ? 'pointer' : 'default';
-        this.dirty = true;
-      }
-      if (id) {
-        const n = this.graph.neurons.find((x) => x.id === id)!;
-        this.hud.showTooltip(
-          `${n.name} · ${n.nodeTotal} nodes`,
-          (this.pointer.x * 0.5 + 0.5) * window.innerWidth,
-          (-this.pointer.y * 0.5 + 0.5) * window.innerHeight,
-        );
-      } else {
-        this.hud.hideTooltip();
-      }
-    }
+    this.updateGlow(dt, t);
+    this.updateHover();
 
     if (this.dirty) {
       this.applySpotlight();
       this.dirty = false;
     }
+
+    // Ease bloom between the dreamy overview and the crisp focus view.
+    this.bloom.strength += (this.bloomTarget - this.bloom.strength) * Math.min(1, dt * 3);
 
     // Fly the orbit pivot and camera toward the current goal.
     if (this.focusLerp < 1) {
@@ -400,7 +620,7 @@ export class Brain {
     }
 
     this.labels?.update(this.camera, window.innerWidth, window.innerHeight);
-    this.innerLabels?.update(this.camera, window.innerWidth, window.innerHeight);
+    this.flowLabels?.update(this.camera, window.innerWidth, window.innerHeight);
     this.composer.render();
   }
 
@@ -420,7 +640,7 @@ export class Brain {
       active = this.activeEdgesFor(visible, true);
     }
 
-    this.stars.spotlight(visible, focus);
-    this.synapses.recolor(active, this.kindsEnabled);
+    this.stars.spotlight(visible, focus, this.focusId !== null);
+    this.synapses.recolor(active, this.kindsEnabled, this.focusId !== null);
   }
 }
