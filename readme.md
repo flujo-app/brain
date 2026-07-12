@@ -4,7 +4,7 @@
 
 ### Your AI agents have a brain. Now you can *watch it think.*
 
-**brain** turns a [FLUJO](https://github.com/mario-andreschak/FLUJO) workspace into a living neural network —
+**brain** turns a [FLUJO](https://mario-andreschak.github.io/FLUJO/githubpages/index.html) workspace into a living neural network —
 every flow a glowing neuron, every connection a synapse with signals pulsing along it.
 Then it goes further: it **grows autonomous brains** that learn, act, and evolve on their own,
 while you watch every thought fire in real time.
