@@ -54,7 +54,9 @@ const WAKE_PROMPT =
   'then summarize what changed.';
 
 const CRONS: Array<{ cron: string; label: string }> = [
-  // 30s is safe: FLUJO's scheduler skips a beat while a run is in flight.
+  // First entry = the default. Short beats are safe (FLUJO's scheduler skips
+  // a fire while a run is in flight) — 3 minutes just keeps token spend sane.
+  { cron: '0 */3 * * * *', label: 'every 3 minutes' },
   { cron: '*/30 * * * * *', label: 'every 30 seconds' },
   { cron: '*/15 * * * *', label: 'every 15 minutes' },
   { cron: '0 * * * *', label: 'every hour' },
@@ -275,7 +277,7 @@ export class AiDock {
   private async createHeartbeat(btn: HTMLButtonElement): Promise<void> {
     const base = flujoBase();
     if (!base || !this.stem) return;
-    const cron = this.setup.querySelector<HTMLSelectElement>('#hb-cron')?.value ?? '*/30 * * * * *';
+    const cron = this.setup.querySelector<HTMLSelectElement>('#hb-cron')?.value ?? '0 */3 * * * *';
     btn.disabled = true;
     btn.textContent = '… creating';
     try {
@@ -347,7 +349,7 @@ export class AiDock {
     const lifeGoal = this.setup.querySelector<HTMLTextAreaElement>('#grow-goal')?.value.trim() ?? '';
     const modelId = this.setup.querySelector<HTMLSelectElement>('#grow-model')?.value ?? '';
     const heartbeat = this.setup.querySelector<HTMLInputElement>('#grow-hb')?.checked ?? true;
-    const cron = this.setup.querySelector<HTMLSelectElement>('#grow-cron')?.value ?? '*/30 * * * * *';
+    const cron = this.setup.querySelector<HTMLSelectElement>('#grow-cron')?.value ?? '0 */3 * * * *';
     const status = this.setup.querySelector<HTMLElement>('#grow-status')!;
     if (!lifeGoal) {
       status.textContent = 'give it a life goal first.';

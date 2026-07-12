@@ -148,14 +148,21 @@ export async function provisionBrain(registry: Registry, brain: BrainRecord, req
       });
     }
 
-    // 4. The brain-stem flow (life goal + model + tools).
+    // 4. The brain-stem flow (life goal + model + tools). Newer FLUJOs expose
+    //    their whole API as the built-in "flujo" MCP server (also proxied at
+    //    /mcp-proxy/flujo) — bind all of its tools so the brain-stem can drive
+    //    FLUJO directly. Older instances just don't have it; skip silently.
     await step('growing the brain-stem…');
+    const flujoTools = await flujo
+      .listServerTools('flujo')
+      .then((r) => (r.error ? [] : (r.tools ?? []).flatMap((t) => (t.name ? [t.name] : []))))
+      .catch(() => [] as string[]);
     const flows = await flujo.listFlows().catch(() => []);
     const already = flows.find((f) => f.name === BRAINSTEM_NAME);
     if (already) {
       brain.brainstemFlowId = already.id;
     } else {
-      const flow = brainstemFlow(brain, model.id, model.name) as { id: string };
+      const flow = brainstemFlow(brain, model.id, model.name, flujoTools) as { id: string };
       await flujo.createFlow(flow);
       brain.brainstemFlowId = flow.id;
     }
@@ -170,9 +177,10 @@ export async function provisionBrain(registry: Registry, brain: BrainRecord, req
           flowId: brain.brainstemFlowId,
           prompt: WAKE_PROMPT,
           saveConversations: true,
-          // 30s beat (croner 6-field, seconds first). Safe because FLUJO's
-          // scheduler skips a fire while the previous run is still in flight.
-          trigger: { type: 'schedule', cron: req.heartbeatCron ?? '*/30 * * * * *', catchUp: false },
+          // 3-minute beat (croner 6-field, seconds first). Overlap is safe —
+          // FLUJO's scheduler skips a fire while the previous run is still in
+          // flight — the default is about keeping token spend sane.
+          trigger: { type: 'schedule', cron: req.heartbeatCron ?? '0 */3 * * * *', catchUp: false },
         });
       } catch (err) {
         // Not fatal — the brain works, it just doesn't wake on its own.

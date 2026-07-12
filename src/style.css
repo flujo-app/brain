@@ -508,6 +508,37 @@ body.reading #legend { display: none; }
   max-height: 4.4em;
 }
 
+#hb-tempo {
+  display: flex; align-items: center; gap: 9px;
+  padding: 9px 2px 1px;
+  margin-top: 8px;
+  border-top: 1px solid var(--border);
+  font-size: 10.5px; color: var(--muted);
+}
+#hb-tempo .t { text-transform: uppercase; letter-spacing: 0.12em; flex-shrink: 0; }
+#hb-tempo-label { flex-shrink: 0; min-width: 74px; text-align: right; }
+#hb-tempo-slider {
+  flex: 1; min-width: 0;
+  appearance: none; -webkit-appearance: none;
+  height: 3px; border-radius: 2px;
+  background: rgba(140, 160, 220, 0.3);
+  outline: none; cursor: pointer;
+}
+#hb-tempo-slider::-webkit-slider-thumb {
+  appearance: none; -webkit-appearance: none;
+  width: 13px; height: 13px; border-radius: 50%;
+  background: #ff5c8a;
+  border: 2px solid rgba(10, 14, 28, 0.9);
+  box-shadow: 0 0 8px rgba(255, 92, 138, 0.6);
+}
+#hb-tempo-slider::-moz-range-thumb {
+  width: 11px; height: 11px; border-radius: 50%;
+  background: #ff5c8a;
+  border: 2px solid rgba(10, 14, 28, 0.9);
+  box-shadow: 0 0 8px rgba(255, 92, 138, 0.6);
+}
+#hb-tempo.hidden { display: none; }
+
 @media (max-width: 720px) {
   #heartbeat { display: none; }
 }

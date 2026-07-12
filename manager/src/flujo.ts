@@ -100,6 +100,11 @@ export class FlujoClient {
     return this.req('/api/mcp-registry', { timeoutMs: 30_000 });
   }
 
+  /** Tools of one MCP server (e.g. FLUJO's built-in "flujo" API server). */
+  listServerTools(name: string): Promise<{ tools?: Array<{ name?: string }>; error?: string }> {
+    return this.req(`/api/mcp/servers/${encodeURIComponent(name)}/tools`, { timeoutMs: 30_000 });
+  }
+
   // ---- execution ----
   /** Run a flow to completion via the OpenAI-compatible endpoint. */
   async runFlow(flowName: string, input: string, timeoutMs = 600_000): Promise<string> {

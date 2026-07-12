@@ -1,7 +1,7 @@
 import './style.css';
 import { fetchBrain, flujoBase, watchBrain } from './data/loader';
 import { ExecutionWatcher, type BrainActivityEvent } from './data/execution';
-import { HeartbeatWatcher } from './data/heartbeat';
+import { HeartbeatWatcher, setHeartbeatTempo } from './data/heartbeat';
 import { Brain } from './scene/brain';
 import { Brain2D } from './scene2d/brain2d';
 import { Hud, type ViewMode } from './ui/hud';
@@ -144,6 +144,8 @@ async function boot() {
 
   // The last heartbeat's transcript, top right while nothing is focused.
   new HeartbeatWatcher((h) => hud.setHeartbeat(h)).start();
+  // The tempo slider re-arms the heartbeat's schedule in FLUJO.
+  hud.onTempo = (executionId, cron) => setHeartbeatTempo(executionId, cron);
 
   // If a brain-manager is serving us, offer the lobby.
   fetch('/api/health')

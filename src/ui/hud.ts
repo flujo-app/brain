@@ -18,6 +18,52 @@ function esc(s: string): string {
   return s.replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch]!);
 }
 
+/** The tempo slider's stops: beat interval in seconds ↔ croner 6-field cron. */
+const TEMPO_STOPS: Array<{ s: number; cron: string; label: string }> = [
+  { s: 30, cron: '*/30 * * * * *', label: 'every 30s' },
+  { s: 60, cron: '0 * * * * *', label: 'every minute' },
+  { s: 180, cron: '0 */3 * * * *', label: 'every 3 min' },
+  { s: 300, cron: '0 */5 * * * *', label: 'every 5 min' },
+  { s: 600, cron: '0 */10 * * * *', label: 'every 10 min' },
+  { s: 1800, cron: '0 */30 * * * *', label: 'every 30 min' },
+  { s: 3600, cron: '0 0 * * * *', label: 'every hour' },
+];
+
+/** Best-effort: turn simple interval crons (5- or 6-field) into seconds. */
+function cronSeconds(cron: string): number | null {
+  const f = cron.trim().split(/\s+/);
+  let m: RegExpMatchArray | null;
+  if (f.length === 6) {
+    const [sec, min, hour] = f;
+    if ((m = sec.match(/^\*\/(\d+)$/))) return +m[1];
+    if (sec !== '0' && sec !== '*') return null;
+    if ((m = min.match(/^\*\/(\d+)$/))) return +m[1] * 60;
+    if (min === '*') return 60;
+    if (min !== '0') return null;
+    if (hour === '*') return 3600;
+    if ((m = hour.match(/^\*\/(\d+)$/))) return +m[1] * 3600;
+    return null;
+  }
+  if (f.length === 5) {
+    const [min, hour] = f;
+    if ((m = min.match(/^\*\/(\d+)$/))) return +m[1] * 60;
+    if (min === '*') return 60;
+    if (/^\d+$/.test(min) && hour === '*') return 3600;
+  }
+  return null;
+}
+
+/** Nearest slider stop for a cron (default: the 3-minute stop). */
+function tempoIndexOf(cron: string | null): number {
+  const s = cron ? cronSeconds(cron) : null;
+  if (s == null) return 2;
+  let best = 0;
+  for (let i = 1; i < TEMPO_STOPS.length; i++) {
+    if (Math.abs(TEMPO_STOPS[i].s - s) < Math.abs(TEMPO_STOPS[best].s - s)) best = i;
+  }
+  return best;
+}
+
 /** "12s ago" / "3m ago" / "2h ago" for the heartbeat header. */
 function relTime(iso: string): string {
   const ms = Date.now() - Date.parse(iso);
@@ -66,6 +112,8 @@ export class Hud {
   private panelCollapsed = localStorage.getItem(PANEL_COLLAPSED_KEY) === '1';
   /** Last heartbeat data (shown top-right while nothing is selected). */
   private heartbeatInfo: HeartbeatInfo | null = null;
+  /** True while the user holds the tempo slider — polls must not snap it back. */
+  private tempoDragging = false;
 
   onSearch: (q: string) => void = () => {};
   onToggleKind: (k: SynapseKind, on: boolean) => void = () => {};
@@ -78,6 +126,8 @@ export class Hud {
   onBackToBehaviour: () => void = () => {};
   /** Jump focus to another behaviour (subflow node link). */
   onFocusBehaviour: (id: string) => void = () => {};
+  /** Tempo slider: re-arm the heartbeat with a new cron. */
+  onTempo: (executionId: string, cron: string) => void | Promise<void> = () => {};
 
   constructor() {
     const search = this.$<HTMLInputElement>('search');
@@ -110,6 +160,24 @@ export class Hud {
     const savedW = Number(localStorage.getItem(PANEL_W_KEY));
     if (savedW) this.panel.style.width = `${this.clampPanelWidth(savedW)}px`;
     this.initPanelResize();
+
+    // Tempo slider: label follows the thumb live; releasing re-arms the beat.
+    const tempo = this.$<HTMLInputElement>('hb-tempo-slider');
+    tempo.addEventListener('pointerdown', () => (this.tempoDragging = true));
+    tempo.addEventListener('pointerup', () => (this.tempoDragging = false));
+    tempo.addEventListener('input', () => {
+      this.$('hb-tempo-label').textContent = TEMPO_STOPS[Number(tempo.value)]?.label ?? '';
+    });
+    tempo.addEventListener('change', () => {
+      this.tempoDragging = false;
+      const stop = TEMPO_STOPS[Number(tempo.value)];
+      const id = this.heartbeatInfo?.executionId;
+      if (stop && id) {
+        void Promise.resolve(this.onTempo(id, stop.cron)).catch(() => {
+          this.$('hb-tempo-label').textContent = '⚠ change failed';
+        });
+      }
+    });
   }
 
   private setPanelCollapsed(collapsed: boolean): void {
@@ -216,6 +284,18 @@ export class Hud {
         .map((m) => `<div class="hb-msg ${m.role === 'user' ? 'user' : 'assistant'}">${esc(m.text)}</div>`)
         .join('');
       msgs.scrollTop = msgs.scrollHeight;
+
+      // Tempo slider — only for schedule-driven beats we can re-arm.
+      const canTempo = Boolean(h.executionId && h.cron);
+      this.$('hb-tempo').classList.toggle('hidden', !canTempo);
+      if (canTempo && !this.tempoDragging) {
+        const i = tempoIndexOf(h.cron);
+        this.$<HTMLInputElement>('hb-tempo-slider').value = String(i);
+        // A cron off the slider's stops (e.g. "every morning") shows as-is —
+        // the thumb just marks the nearest stop.
+        const exact = cronSeconds(h.cron!) === TEMPO_STOPS[i].s;
+        this.$('hb-tempo-label').textContent = exact ? TEMPO_STOPS[i].label : h.cron!;
+      }
     }
     this.syncPanels();
   }

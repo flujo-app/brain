@@ -180,15 +180,26 @@ you act ONLY through your tools:
 - learn_skill: install new MCP tools when behaviours need capabilities you lack.
 - forget_behaviour / forget_skill: prune what proved useless — stay lean.
 
+When the "flujo" skill is bound you also hold FLUJO's own API: authoring and
+running flows, managing MCP servers, models, and planned executions (your own
+heartbeat included). It is surgical power — prefer the verbs above for everyday
+work and reach for the flujo tools when they cannot express what you need.
+
 Each time you wake, take stock, decide the single most useful step toward your
 life goal, and take it. Prefer improving one thing well over many things poorly.
 End by summarizing what changed and what should happen on the next wake-up.`;
 
-/** Build the brain-stem flow JSON (FLUJO's exact node/edge shapes). */
-export function brainstemFlow(brain: BrainRecord, modelId: string, modelName: string): unknown {
+/** FLUJO's built-in internal MCP server (its whole API as tools). */
+const FLUJO_SERVER_NAME = 'flujo';
+
+/** Build the brain-stem flow JSON (FLUJO's exact node/edge shapes).
+ *  `flujoTools`: tool names of the built-in "flujo" server to bind as a second
+ *  ability (empty = instance doesn't have it, node is omitted). */
+export function brainstemFlow(brain: BrainRecord, modelId: string, modelName: string, flujoTools: string[] = []): unknown {
   const startId = crypto.randomUUID();
   const processId = crypto.randomUUID();
   const mcpId = crypto.randomUUID();
+  const flujoMcpId = crypto.randomUUID();
   const finishId = crypto.randomUUID();
   const tools = [...BRAINSTEM_TOOLS];
 
@@ -203,6 +214,20 @@ export function brainstemFlow(brain: BrainRecord, modelId: string, modelName: st
     target,
     targetHandle,
     data: { edgeType: 'standard' },
+  });
+
+  const mcpEdge = (source: string, target: string) => ({
+    id: `${source}-${target}`,
+    type: 'mcpEdge',
+    animated: false,
+    style: { stroke: '#1976d2', strokeWidth: 2 },
+    markerEnd: { type: 'arrowclosed', width: 20, height: 20, color: '#1976d2' },
+    markerStart: { type: 'arrowclosed', width: 20, height: 20, color: '#1976d2' },
+    source,
+    sourceHandle: 'process-right-mcp',
+    target,
+    targetHandle: 'mcp-left',
+    data: { edgeType: 'mcp' },
   });
 
   return {
@@ -234,7 +259,12 @@ export function brainstemFlow(brain: BrainRecord, modelId: string, modelName: st
             promptTemplate: BRAINSTEM_PROMPT,
             excludeModelPrompt: false,
             excludeStartNodePrompt: false,
-            mcpNodes: [{ id: mcpId, properties: { boundServer: BRAINSTEM_NAME, enabledTools: tools } }],
+            mcpNodes: [
+              { id: mcpId, properties: { boundServer: BRAINSTEM_NAME, enabledTools: tools } },
+              ...(flujoTools.length
+                ? [{ id: flujoMcpId, properties: { boundServer: FLUJO_SERVER_NAME, enabledTools: flujoTools } }]
+                : []),
+            ],
           },
         },
       },
@@ -248,6 +278,20 @@ export function brainstemFlow(brain: BrainRecord, modelId: string, modelName: st
           properties: { boundServer: BRAINSTEM_NAME, enabledTools: tools },
         },
       },
+      ...(flujoTools.length
+        ? [
+            {
+              id: flujoMcpId,
+              type: 'mcp',
+              position: { x: 540, y: 400 },
+              data: {
+                label: 'FLUJO API',
+                type: 'mcp',
+                properties: { boundServer: FLUJO_SERVER_NAME, enabledTools: flujoTools },
+              },
+            },
+          ]
+        : []),
       {
         id: finishId,
         type: 'finish',
@@ -258,19 +302,8 @@ export function brainstemFlow(brain: BrainRecord, modelId: string, modelName: st
     edges: [
       edge(startId, 'start-bottom', processId, 'process-top'),
       edge(processId, 'process-bottom', finishId, 'finish-top'),
-      {
-        id: `${processId}-${mcpId}`,
-        type: 'mcpEdge',
-        animated: false,
-        style: { stroke: '#1976d2', strokeWidth: 2 },
-        markerEnd: { type: 'arrowclosed', width: 20, height: 20, color: '#1976d2' },
-        markerStart: { type: 'arrowclosed', width: 20, height: 20, color: '#1976d2' },
-        source: processId,
-        sourceHandle: 'process-right-mcp',
-        target: mcpId,
-        targetHandle: 'mcp-left',
-        data: { edgeType: 'mcp' },
-      },
+      mcpEdge(processId, mcpId),
+      ...(flujoTools.length ? [mcpEdge(processId, flujoMcpId)] : []),
     ],
   };
 }

@@ -22,10 +22,14 @@ export interface HeartbeatInfo {
   /** When the beat fired (ISO timestamp). */
   firedAt: string;
   messages: HeartbeatMessage[];
+  /** The planned execution behind the beat — target for the tempo slider. */
+  executionId: string | null;
+  /** Current schedule cron; null when the trigger is not schedule-based. */
+  cron: string | null;
 }
 
 interface PlannedListEntry {
-  execution?: { name?: string; flowId?: string; trigger?: { type?: string } };
+  execution?: { id?: string; name?: string; flowId?: string; trigger?: { type?: string; cron?: string } };
   lastRun?: { conversationId?: string; firedAt?: string };
 }
 
@@ -111,6 +115,8 @@ export class HeartbeatWatcher {
         status: conv.status ?? 'completed',
         firedAt: beat.lastRun!.firedAt ?? '',
         messages,
+        executionId: beat.execution?.id ?? null,
+        cron: beat.execution?.trigger?.type === 'schedule' ? beat.execution.trigger.cron ?? null : null,
       });
     } catch {
       // FLUJO temporarily unreachable — keep whatever is shown, retry next tick.
@@ -120,9 +126,23 @@ export class HeartbeatWatcher {
   }
 
   private push(h: HeartbeatInfo | null): void {
-    const sig = h ? `${h.firedAt}|${h.status}|${h.messages.length}|${h.messages[h.messages.length - 1]?.text ?? ''}` : 'null';
+    const sig = h
+      ? `${h.firedAt}|${h.status}|${h.cron}|${h.messages.length}|${h.messages[h.messages.length - 1]?.text ?? ''}`
+      : 'null';
     if (sig === this.lastSig) return;
     this.lastSig = sig;
     this.onUpdate(h);
   }
+}
+
+/** Re-arm the heartbeat's schedule with a new cron (the tempo slider). */
+export async function setHeartbeatTempo(executionId: string, cron: string): Promise<void> {
+  const base = flujoBase();
+  if (!base) throw new Error('FLUJO is not reachable');
+  const res = await fetch(`${base}/api/planned-executions/${encodeURIComponent(executionId)}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ trigger: { type: 'schedule', cron, catchUp: false } }),
+  });
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
 }
