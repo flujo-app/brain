@@ -16,8 +16,6 @@ while you watch every thought fire in real time.
 
 <img width="1904" height="936" alt="image" src="https://github.com/user-attachments/assets/8257a3c2-3d19-42e1-a106-f3c7d1e9a9ed" />
 
-<img src="docs/shot-overview.png" alt="A FLUJO workspace rendered as a living brain — galaxies of neurons wired by pulsing synapses" width="100%" />
-
 *A real FLUJO workspace, live: 25 behaviours, 177 connections, organised into provider galaxies.*
 
 </div>
