@@ -40,7 +40,7 @@ export interface CreateBrainRequest {
   adoptUrl?: string;
   /** Create the planned-execution heartbeat that wakes the brain-stem. */
   heartbeat?: boolean;
-  /** Cron for the heartbeat (croner syntax). Default: hourly. */
+  /** Cron for the heartbeat (croner syntax). Default: every 30 seconds. */
   heartbeatCron?: string;
   /** Kick a first brain-stem run right after provisioning (spends tokens). */
   wake?: boolean;

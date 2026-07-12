@@ -170,7 +170,9 @@ export async function provisionBrain(registry: Registry, brain: BrainRecord, req
           flowId: brain.brainstemFlowId,
           prompt: WAKE_PROMPT,
           saveConversations: true,
-          trigger: { type: 'schedule', cron: req.heartbeatCron ?? '0 * * * *', catchUp: false },
+          // 30s beat (croner 6-field, seconds first). Safe because FLUJO's
+          // scheduler skips a fire while the previous run is still in flight.
+          trigger: { type: 'schedule', cron: req.heartbeatCron ?? '*/30 * * * * *', catchUp: false },
         });
       } catch (err) {
         // Not fatal — the brain works, it just doesn't wake on its own.

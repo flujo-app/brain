@@ -418,7 +418,7 @@ const freshWiz = (): WizState => ({
   adopt: false,
   existingId: '',
   heartbeat: true,
-  cron: '0 * * * *',
+  cron: '*/30 * * * * *',
   wake: false,
   busy: false,
   error: null,

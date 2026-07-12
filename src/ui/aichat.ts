@@ -52,6 +52,8 @@ const WAKE_PROMPT =
   'then summarize what changed.';
 
 const CRONS: Array<{ cron: string; label: string }> = [
+  // 30s is safe: FLUJO's scheduler skips a beat while a run is in flight.
+  { cron: '*/30 * * * * *', label: 'every 30 seconds' },
   { cron: '*/15 * * * *', label: 'every 15 minutes' },
   { cron: '0 * * * *', label: 'every hour' },
   { cron: '0 8 * * *', label: 'every morning' },
@@ -259,7 +261,7 @@ export class AiDock {
   }
 
   private renderHeartbeatCard(): void {
-    const options = CRONS.map((c, i) => `<option value="${c.cron}"${i === 1 ? ' selected' : ''}>${c.label}</option>`);
+    const options = CRONS.map((c, i) => `<option value="${c.cron}"${i === 0 ? ' selected' : ''}>${c.label}</option>`);
     this.setup.innerHTML =
       '<p class="ask">💓 No heartbeat — this brain never wakes on its own. Start one?</p>' +
       `<div class="row"><select id="hb-cron">${options.join('')}</select>` +
@@ -271,7 +273,7 @@ export class AiDock {
   private async createHeartbeat(btn: HTMLButtonElement): Promise<void> {
     const base = flujoBase();
     if (!base || !this.stem) return;
-    const cron = this.setup.querySelector<HTMLSelectElement>('#hb-cron')?.value ?? '0 * * * *';
+    const cron = this.setup.querySelector<HTMLSelectElement>('#hb-cron')?.value ?? '*/30 * * * * *';
     btn.disabled = true;
     btn.textContent = '… creating';
     try {
@@ -310,7 +312,7 @@ export class AiDock {
       return;
     }
     const options = models.map((m) => `<option value="${esc(m.id)}">${esc(m.label)}</option>`);
-    const crons = CRONS.map((c, i) => `<option value="${c.cron}"${i === 1 ? ' selected' : ''}>${c.label}</option>`);
+    const crons = CRONS.map((c, i) => `<option value="${c.cron}"${i === 0 ? ' selected' : ''}>${c.label}</option>`);
     this.setup.innerHTML =
       '<p class="ask">🧠 This brain has no <b>brain-stem</b> — behaviours, but no self and no life goal. Grow one in this running instance?</p>' +
       '<input id="grow-name" value="brain" placeholder="name" />' +
@@ -345,7 +347,7 @@ export class AiDock {
     const lifeGoal = this.setup.querySelector<HTMLTextAreaElement>('#grow-goal')?.value.trim() ?? '';
     const modelId = this.setup.querySelector<HTMLSelectElement>('#grow-model')?.value ?? '';
     const heartbeat = this.setup.querySelector<HTMLInputElement>('#grow-hb')?.checked ?? true;
-    const cron = this.setup.querySelector<HTMLSelectElement>('#grow-cron')?.value ?? '0 * * * *';
+    const cron = this.setup.querySelector<HTMLSelectElement>('#grow-cron')?.value ?? '*/30 * * * * *';
     const status = this.setup.querySelector<HTMLElement>('#grow-status')!;
     if (!lifeGoal) {
       status.textContent = 'give it a life goal first.';
