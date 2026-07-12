@@ -1,6 +1,7 @@
 import './style.css';
 import { fetchBrain, flujoBase, watchBrain } from './data/loader';
 import { ExecutionWatcher, type BrainActivityEvent } from './data/execution';
+import { HeartbeatWatcher } from './data/heartbeat';
 import { Brain } from './scene/brain';
 import { Brain2D } from './scene2d/brain2d';
 import { Hud, type ViewMode } from './ui/hud';
@@ -140,6 +141,9 @@ async function boot() {
 
   // Live execution: watch running conversations and feed events to the scene.
   new ExecutionWatcher((e) => brain?.handleExecution(e)).start();
+
+  // The last heartbeat's transcript, top right while nothing is focused.
+  new HeartbeatWatcher((h) => hud.setHeartbeat(h)).start();
 
   // If a brain-manager is serving us, offer the lobby.
   fetch('/api/health')

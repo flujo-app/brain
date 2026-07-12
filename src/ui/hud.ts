@@ -1,5 +1,6 @@
 import type { InnerNode, Neuron, ServerStatus, Synapse, SynapseKind } from '../types';
 import type { GroupMode } from '../grouping';
+import type { HeartbeatInfo } from '../data/heartbeat';
 import { NODE_TYPE_COLORS, SYNAPSE_COLORS, nodeTypeLabel, providerLabel } from '../theme';
 
 const STATUS_COLORS: Record<ServerStatus, string> = {
@@ -15,6 +16,17 @@ function hex(n: number): string {
 
 function esc(s: string): string {
   return s.replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch]!);
+}
+
+/** "12s ago" / "3m ago" / "2h ago" for the heartbeat header. */
+function relTime(iso: string): string {
+  const ms = Date.now() - Date.parse(iso);
+  if (!Number.isFinite(ms) || ms < 0) return '';
+  const s = Math.round(ms / 1000);
+  if (s < 60) return `${s}s ago`;
+  const m = Math.round(s / 60);
+  if (m < 60) return `${m}m ago`;
+  return `${Math.round(m / 60)}h ago`;
 }
 
 /** A little on/off switch row for boolean node settings. */
@@ -52,6 +64,8 @@ export class Hud {
   /** True while a behaviour / node is selected (reader + panel visible). */
   private selectionOpen = false;
   private panelCollapsed = localStorage.getItem(PANEL_COLLAPSED_KEY) === '1';
+  /** Last heartbeat data (shown top-right while nothing is selected). */
+  private heartbeatInfo: HeartbeatInfo | null = null;
 
   onSearch: (q: string) => void = () => {};
   onToggleKind: (k: SynapseKind, on: boolean) => void = () => {};
@@ -111,6 +125,9 @@ export class Hud {
     this.reader.classList.toggle('hidden', !this.selectionOpen);
     // The legend yields its corner to the reader while something is selected.
     document.body.classList.toggle('reading', this.selectionOpen);
+    // The heartbeat transcript owns the top-right corner in overview only —
+    // a focused behaviour's panel takes that spot.
+    this.$('heartbeat').classList.toggle('hidden', this.selectionOpen || !this.heartbeatInfo?.messages.length);
   }
 
   private clampPanelWidth(w: number): number {
@@ -185,6 +202,22 @@ export class Hud {
       `<b>${esc(a.flow)}</b>` +
       (a.detail ? ` <em>· ${esc(a.detail)}</em>` : '') +
       (a.runs && a.runs > 1 ? ` <em>· ${a.runs} runs</em>` : '');
+  }
+
+  /** Show / update the last-heartbeat transcript (top-right, overview only). */
+  setHeartbeat(h: HeartbeatInfo | null): void {
+    this.heartbeatInfo = h;
+    if (h?.messages.length) {
+      this.$('hb-title').textContent = h.name;
+      this.$('hb-time').textContent = h.status === 'running' ? 'beating…' : relTime(h.firedAt);
+      this.$('heartbeat').classList.toggle('running', h.status === 'running');
+      const msgs = this.$('hb-msgs');
+      msgs.innerHTML = h.messages
+        .map((m) => `<div class="hb-msg ${m.role === 'user' ? 'user' : 'assistant'}">${esc(m.text)}</div>`)
+        .join('');
+      msgs.scrollTop = msgs.scrollHeight;
+    }
+    this.syncPanels();
   }
 
   setGroupMode(mode: GroupMode): void {

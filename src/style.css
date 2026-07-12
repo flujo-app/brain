@@ -461,6 +461,57 @@ body.reading #legend { display: none; }
   #ai-dock { right: 12px; left: 12px; width: auto; }
 }
 
+/* Last heartbeat transcript — top right, overview only */
+#heartbeat {
+  right: 22px; top: 84px;
+  width: min(340px, calc(100vw - 44px));
+  max-height: min(46vh, 420px);
+  display: flex; flex-direction: column;
+  padding: 12px 14px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  backdrop-filter: blur(12px);
+}
+#heartbeat header {
+  position: static;
+  display: flex; align-items: baseline; gap: 8px;
+  padding: 0 0 8px;
+  font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.12em; color: var(--muted);
+}
+#heartbeat .beat { color: #ff5c8a; font-size: 13px; }
+#heartbeat.running .beat { animation: heartbeat 1.1s ease-in-out infinite; display: inline-block; }
+#hb-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#hb-time { margin-left: auto; flex-shrink: 0; text-transform: none; letter-spacing: normal; }
+#hb-msgs { overflow-y: auto; display: flex; flex-direction: column; gap: 7px; }
+.hb-msg {
+  font-size: 12.5px; line-height: 1.45;
+  padding: 7px 11px; border-radius: 11px;
+  white-space: pre-wrap; word-break: break-word;
+  /* Long turns collapse to a peek — the full text lives in FLUJO's chat. */
+  max-height: 8.7em; overflow: hidden;
+}
+.hb-msg.assistant {
+  color: var(--fg);
+  background: rgba(125, 123, 255, 0.10);
+  border: 1px solid rgba(125, 123, 255, 0.22);
+  border-bottom-left-radius: 4px;
+}
+.hb-msg.user {
+  color: var(--muted);
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid var(--border);
+  border-bottom-right-radius: 4px;
+  align-self: flex-end;
+  max-width: 88%;
+  font-size: 11.5px;
+  max-height: 4.4em;
+}
+
+@media (max-width: 720px) {
+  #heartbeat { display: none; }
+}
+
 #tooltip {
   position: fixed; z-index: 20; pointer-events: none;
   padding: 6px 11px; border-radius: 9px;
