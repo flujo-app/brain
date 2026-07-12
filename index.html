@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>FLUJO · brain</title>
+    <meta name="description" content="A WebGL brain that renders FLUJO flows as neurons and their relationships as synapses." />
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><text y='13' font-size='13'>🧠</text></svg>" />
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <canvas id="scene"></canvas>
+
+    <header id="hud-top">
+      <div class="title">
+        <span class="glyph">🧠</span>
+        <div>
+          <h1>brain</h1>
+          <p>FLUJO flows as neurons · <span id="source-badge">loading…</span></p>
+        </div>
+      </div>
+      <div class="controls">
+        <label class="group-picker">
+          <span>sections by</span>
+          <select id="group-mode">
+            <option value="provider">provider</option>
+            <option value="folder">folder</option>
+            <option value="model">model</option>
+          </select>
+        </label>
+        <input id="search" type="search" placeholder="search flows…" autocomplete="off" spellcheck="false" />
+      </div>
+    </header>
+
+    <aside id="legend">
+      <h2>Synapses</h2>
+      <label class="syn" data-kind="subflow"><span class="swatch"></span> subflow call <em>toggle</em></label>
+      <label class="syn" data-kind="server"><span class="swatch"></span> shared MCP server <em>toggle</em></label>
+      <label class="syn" data-kind="model"><span class="swatch"></span> shared model <em>toggle</em></label>
+      <h2>Nodes</h2>
+      <div class="nodes">
+        <span data-t="start">start</span>
+        <span data-t="process">process</span>
+        <span data-t="mcp">mcp</span>
+        <span data-t="subflow">subflow</span>
+        <span data-t="finish">finish</span>
+      </div>
+    </aside>
+
+    <section id="panel" class="hidden">
+      <button id="panel-close" aria-label="close">×</button>
+      <h2 id="p-name"></h2>
+      <p id="p-desc"></p>
+      <div id="p-stats"></div>
+      <div id="p-rels"></div>
+      <p id="p-hint">Drag to orbit · scroll to zoom · click a neuron to focus</p>
+    </section>
+
+    <footer id="hud-bottom">
+      <span id="stat-flows">—</span> neurons ·
+      <span id="stat-syn">—</span> synapses ·
+      <span id="stat-sec">—</span> sections ·
+      <span id="stat-hint">click empty space to reset</span>
+    </footer>
+
+    <div id="tooltip" class="hidden"></div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

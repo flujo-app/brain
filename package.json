@@ -1,0 +1,32 @@
+{
+  "name": "flujo-brain",
+  "version": "0.1.0",
+  "description": "A WebGL brain that visualizes FLUJO flows as neurons and their relationships as synapses.",
+  "type": "module",
+  "scripts": {
+    "gen": "node scripts/generate-data.mjs",
+    "dev": "vite",
+    "build": "npm run gen && tsc --noEmit && vite build",
+    "preview": "vite preview"
+  },
+  "keywords": [
+    "flujo",
+    "webgl",
+    "three.js",
+    "visualization",
+    "neural",
+    "mcp"
+  ],
+  "license": "MIT",
+  "devDependencies": {
+    "@types/three": "^0.169.0",
+    "typescript": "^5.5.4",
+    "vite": "^5.4.0"
+  },
+  "dependencies": {
+    "three": "^0.169.0"
+  },
+  "allowScripts": {
+    "esbuild@0.21.5": true
+  }
+}
