@@ -1,105 +1,134 @@
+<div align="center">
+
 # 🧠 brain
 
-**A WebGL brain that renders [FLUJO](https://github.com/mario-andreschak/FLUJO) flows as neurons — and their relationships as synapses.**
+### Your AI agents have a brain. Now you can *watch it think.*
 
-Every FLUJO flow becomes a glowing **neuron**. The connections *between* flows become **synapses** with signals pulsing along them, so a whole FLUJO workspace reads at a glance as a living neural network.
+**brain** turns a [FLUJO](https://github.com/mario-andreschak/FLUJO) workspace into a living neural network —
+every flow a glowing neuron, every connection a synapse with signals pulsing along it.
+Then it goes further: it **grows autonomous brains** that learn, act, and evolve on their own,
+while you watch every thought fire in real time.
 
-Where this is heading — Docker bundle, live execution follow-cam, brains with life goals — lives in [ROADMAP.md](ROADMAP.md).
+[![Docker](https://img.shields.io/badge/docker-compose%20up-2496ED?logo=docker&logoColor=white)](#-one-command-to-life)
+[![WebGL](https://img.shields.io/badge/WebGL-Three.js-049EF4?logo=threedotjs&logoColor=white)](https://threejs.org/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white)](tsconfig.json)
+[![License: MIT](https://img.shields.io/badge/license-MIT-8b5cf6)](#license)
 
-![brain](docs/preview.png)
+<img src="docs/shot-overview.png" alt="A FLUJO workspace rendered as a living brain — galaxies of neurons wired by pulsing synapses" width="100%" />
 
-## What you're looking at
+*A real FLUJO workspace, live: 25 behaviours, 177 connections, organised into provider galaxies.*
 
-Each neuron is one flow. Its **size** scales with how many nodes the flow has, and its **colour** is the model provider it leans on:
+</div>
 
-| colour | provider |
-| --- | --- |
-| 🟠 amber | Claude (subscription / Anthropic) |
-| 🟢 green | OpenRouter |
-| 🔵 cyan | Ollama (local) |
-| 🟣 violet | Gemini / Google |
-| 🩶 grey | dormant flow (nodes but no wiring) |
+---
 
-Neurons are wired by three kinds of **synapse**, each derived from the real flow definitions:
+## ✨ What is this?
 
-| synapse | meaning |
-| --- | --- |
-| 🟡 **subflow call** | one flow runs another as a Subflow node — a directed axon, always pulsing source → target |
-| 🟦 **shared MCP server** | two flows bind the same MCP server (shared tooling) |
-| 🟪 **shared model** | two flows use the same model |
+Agent workflows are graphs. Graphs are boring rectangles on a canvas — until you realise what they actually are: **behaviours wired into a mind.**
 
-## Sections (galaxies)
+**brain** renders that mind. It connects to a running FLUJO instance and builds a 3D universe out of it:
 
-Flows are organised into spatially separated **brain sections** — galaxies — each with its own hue, faint nebula, and floating label. Pick how they group from the **`sections by`** dropdown:
+- 🌟 Every flow becomes a **neuron** — sized by complexity, coloured by the model provider it thinks with
+- ⚡ Subflow calls become **axons** with signals pulsing from caller to callee
+- 🔗 Shared MCP servers and shared models become **synapses** stretching between neurons
+- 🌌 Flows cluster into **galaxies** — by provider, folder, or model — each with its own nebula and hue
+- 🔍 Click any neuron and the camera **flies inside it**, revealing its internal nodes, prompts, and tool belt
 
-- **provider** — one galaxy per model provider (Claude, OpenRouter, Ollama, …)
-- **folder** — one galaxy per FLUJO dashboard folder
-- **model** — one galaxy per model
+<div align="center">
+<img src="docs/shot-focus.png" alt="Zoomed into a single behaviour: its internal nodes, tool belt, and behaviour calls laid out in 3D" width="100%" />
 
-A two-level force layout places the galaxy centres apart, then lays out each flow within its galaxy — subflow ties pull hardest, cross-galaxy ties barely pull, so the sections stay distinct while shared-resource synapses still stretch between them.
+*Inside a neuron: an orchestrator behaviour with its process nodes, three connected abilities, and the three behaviours it calls.*
+</div>
 
-Within a galaxy each flow is a bright **core star** (sized by node count) surrounded by faint satellite stars — its own internal nodes (`start`/`process`/`mcp`/`subflow`/`finish`).
+## 👁️ Watch it think — live
 
-## Interacting
+This is not a static picture. While a flow runs in FLUJO, brain rides its **server-sent event stream** and animates the execution as it happens:
 
-- **Drag** to orbit, **scroll** to zoom (the brain gently auto-rotates until you touch it).
-- **Hover** a neuron to see its name and light up its immediate connections.
-- **Click** a neuron to zoom into it: the camera flies in, the flow's internal nodes get labels (start / process / mcp / subflow / finish) and wiring, and the side panel shows its MCP servers and connections in collapsible groups.
-- **`view`** dropdown switches between the WebGL **3D orbit** and a true **2D map** rendered with the Canvas 2D API (pan & zoom, sections laid out on a disc) — no GPU shaders, built for modest hardware. The choice is remembered; machines without WebGL or with few cores start in 2D automatically.
-- **`sections by`** dropdown regroups the whole brain by provider / folder / model.
-- **Search** to spotlight flows by name.
-- **Deep link** with `?focus=<flow name>` to open the brain zoomed into a flow.
-- Toggle any **synapse type** in the legend.
-- Click empty space to reset.
+- The running behaviour's neuron **wakes up** — brighter, whiter, swollen, pulsing
+- Subflow calls **flash along their axons** the instant they fire
+- Flip on **follow mode** and the camera chases the thought — flying to whatever behaviour is executing *right now*
+- A "now thinking" strip names the running behaviour, its current node or tool call, and how many runs are live
 
-## Live execution: watch it think
+New flow saved? New MCP server installed? A server drops its connection? The brain **rebuilds itself in seconds** — it polls FLUJO continuously and reflects every change. Nothing is cached to disk; what you see is what's running.
 
-While a flow runs in FLUJO, its neuron **wakes up** — brighter, whiter, pulsing. Subflow calls flash along their axon, and with the **follow** toggle on, the camera flies to whatever behaviour is executing right now. Inside a focused behaviour, the currently executing node lights up, and a strip at the bottom names the running behaviour, its current node or tool call, and how many runs are active.
+## 🌱 Grow a brain — the wizard
 
-This rides on FLUJO's per-conversation SSE event stream (`node:enter`, `subflow:start`, `tool:call`, …) — no polling of execution state, no FLUJO changes.
+Beyond visualizing one workspace, brain has a **lobby** where you grow entire autonomous minds — and the wizard is deliberately non-technical. Three questions, zero jargon:
 
-## Brains: life goals & the brain-stem
+<div align="center">
+<img src="docs/shot-wizard.png" alt="The grow-a-brain wizard: choose where your brain thinks — on your computer, in your network, or online" width="100%" />
+</div>
 
-Beyond visualizing one FLUJO workspace, the **lobby** (`/lobby.html`) grows whole *brains*: each brain is its own FLUJO instance with a **life goal** and a **brain-stem** — a root flow bound to the model you pick (local via Ollama, or bring-your-own-key, stored encrypted by FLUJO). The brain-stem thinks with seven tools served by brain itself over MCP (`list/learn/perform/forget` behaviours and skills — friendly verbs over FLUJO's own API, with guardrails so it can't delete or recurse into itself), and a **heartbeat** (FLUJO planned execution) wakes it on a schedule. Everything it does animates live in the viewer. See [ROADMAP.md](ROADMAP.md) for the architecture.
+1. **Where should your brain think?** On your computer (free, private, via Ollama), on another machine in your network, or online with a paid provider (Anthropic, OpenAI, OpenRouter, …) — curated model picks with plain-language tiers, no model-ID archaeology.
+2. **What is its life goal?** One sentence. This becomes the brain's reason to exist.
+3. **How often should its heart beat?** A schedule that wakes the brain to pursue its goal.
 
-Run the manager locally: `cd manager && npm install && npm run dev` (port 8090; the vite dev server proxies `/api` and `/brains` to it).
+Press grow, and the manager provisions everything: a fresh, fully isolated FLUJO instance, the model (pulled into Ollama if local), the brain-stem, the heartbeat — and the brain appears in the lobby, ready to open and watch.
 
-## Run with Docker
+## 🧬 The self-evolving brain
+
+Every brain is born with a **brain-stem**: a root flow whose prompt is its life goal and whose mind is the model you chose. On every heartbeat it wakes up and *thinks* — using seven tools that brain itself serves to it over MCP:
+
+|  | it can… | which means… |
+| --- | --- | --- |
+| 📋 | `list_behaviours` / `list_skills` | introspect what it already knows |
+| 🧠 | `learn_behaviour` | **write new flows for itself** — LLM-generated, with its own model |
+| ⚡ | `perform_behaviour` | execute anything it has learned |
+| 🔧 | `learn_skill` | **install new MCP servers** from the registry — acquiring real-world tools at runtime |
+| 🗑️ | `forget_behaviour` / `forget_skill` | prune what no longer serves the goal |
+
+So a brain doesn't just run a workflow — it **grows its own**. It learns behaviours, acquires skills, performs them, and forgets what fails. And because the brain-stem runs inside FLUJO's own engine, *every act of self-modification animates live in the viewer*. You literally watch it learn.
+
+Guardrails are enforced at a single choke point — brain's MCP server — not left to the model's good manners: a brain can never delete or overwrite its own brain-stem, `perform_behaviour` refuses recursion into the stem and carries a depth budget, and destructive verbs can require your approval.
+
+## 🐳 One command to life
 
 ```bash
 docker compose up
 ```
 
-brings up the brain (lobby + viewer + manager) at **http://localhost:8080**, a default FLUJO instance (editor at http://localhost:4200), and Ollama for local models. Creating a brain provisions a fresh FLUJO container on an internal network, reachable only through the manager. All ports are bound to localhost only — FLUJO has no auth, and the manager holds the Docker socket, so never expose this stack without your own authenticating reverse proxy.
+That's the whole install. You get:
 
-## Data: live only
-
-`brain` talks to a **running FLUJO instance** (`GET /api/flow`, `/api/model`, `/api/mcp/servers` + per-server status). It finds FLUJO by trying, in order: an explicit override (`?flujo=<url>` query param, `window.__FLUJO_URL__`, or `VITE_FLUJO_URL`), the same-origin `/flujo` proxy path (vite dev proxy locally, nginx in the Docker bundle), then `http://localhost:4200` directly. Everything is fetched at runtime and held in memory only — nothing is persisted, and a page reload starts from scratch. If FLUJO isn't running yet, the brain waits and boots itself the moment FLUJO becomes reachable.
-
-**Live refresh:** the brain polls FLUJO every few seconds and rebuilds itself when anything changes — new or edited flows, newly installed MCP servers, or a server's connection state flipping.
-
-**MCP server state:** every MCP server a flow binds is shown with a status dot — 🟢 connected, 🔴 disconnected, ⚪ disabled. Satellite stars of `mcp` nodes whose server is down or disabled break from their galaxy's hue so problems are visible from orbit.
-
-## Develop
-
-```bash
-npm install
-npm run dev      # vite dev server
-npm run build    # typecheck and build to dist/
-npm run preview  # serve the production build
+```
+        your browser ── localhost only ──┐
+                                         ▼
+   ┌──────────────────────────── brain-net (internal) ────────────────────────────┐
+   │                                                                              │
+   │   🧠 brain  :8080 ──────► lobby + viewer + manager (the only door in)        │
+   │        │ /flujo proxy            │ provisions via Docker socket              │
+   │        ▼                         ▼                                           │
+   │   🌊 FLUJO :4200          🧠 brain #1     🧠 brain #2     🧠 brain #3 …      │
+   │   (default instance)      own FLUJO       own FLUJO       own FLUJO         │
+   │                           own volumes     own volumes     own volumes        │
+   │                           NO ports        NO ports        NO ports           │
+   │        └──────────────────────┴─────── 🦙 Ollama (local models) ─────────────│
+   └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
-Built with [Three.js](https://threejs.org/), TypeScript, and Vite. No backend — it's a static site (deployable to GitHub Pages; `vite.config.ts` defaults to a relative base).
+**Isolation is the architecture, not an option.** Every brain you grow gets its **own FLUJO container** with its own named volumes — its own flows, its own MCP servers, its own memory. Spawned brains publish **zero ports**: they live on an internal Docker network and are reachable only through the manager's authenticated per-brain proxy. One brain cannot see, touch, or break another. Delete a brain and its container vanishes; its volumes survive unless you purge them.
 
-## How it maps FLUJO → brain
+> ⚠️ **Localhost only, by design.** FLUJO has no auth layer, and the manager holds the Docker socket. Every published port binds to `127.0.0.1`. Never expose this stack without your own authenticating reverse proxy — details in the [technical docs](docs/TECHNICAL.md#security-model).
 
-FLUJO flows are graphs of typed nodes (`start`, `process`, `mcp`, `subflow`, `finish`) connected by edges. Node and synapse colours follow FLUJO's own editor palette (amber subflows, blue abilities, green finish…), so the focused view reads like the flow you built. `brain` distils each flow into a neuron, reading:
+## 🚀 Try it in 30 seconds
 
-- **process** nodes → the models/providers the flow uses (`boundModel`)
-- **mcp** nodes → the MCP servers it binds (`boundServer`)
-- **subflow** nodes → the flows it calls (`subflowId`)
+Already running FLUJO? No Docker needed — brain is a static site:
 
-…then wires neuron-to-neuron synapses from the shared/called resources. See [`src/types.ts`](src/types.ts) for the full model.
+```bash
+npm install && npm run dev
+```
+
+Open the URL, and if FLUJO is at `localhost:4200`, the brain boots itself the moment it finds it. Not on 4200? Point it anywhere with `?flujo=<url>`. Weak GPU? There's a full **2D map renderer** (Canvas 2D, no shaders) that low-end machines get automatically.
+
+## 🗺️ Where this is going
+
+Birth and death animations for neurons, a **timeline scrubber** ("this brain at day 3"), approval gates rendered *inside* the visualization so a brain can ask permission before acting, and a multi-brain constellation view. The full plan — verified against FLUJO's actual API surface — is in [ROADMAP.md](ROADMAP.md).
+
+## 📚 Documentation
+
+| | |
+| --- | --- |
+| [**Technical documentation**](docs/TECHNICAL.md) | The full reference: visual language, data pipeline, execution watcher internals, Docker & network architecture, brain-stem protocol and guardrails, dev workflow |
+| [**ROADMAP.md**](ROADMAP.md) | Phases, design decisions, and what FLUJO's API makes possible |
 
 ## License
 
