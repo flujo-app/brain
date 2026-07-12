@@ -100,6 +100,16 @@ A "now thinking" strip (bottom centre) names the running behaviour, its current 
 
 Dev hook: `__brainSim({kind:'run-start', …})` in the console simulates events without spending model tokens.
 
+## Pause & the AI input window
+
+The **⏸ pause** button in the viewer header freezes the whole mind and opens a chat dock (`src/data/pause.ts` + `src/ui/aichat.ts`):
+
+- **Scheduler**: `PATCH /api/planned-executions {paused: true}` — FLUJO's global pause switch; no planned execution (heartbeat) fires until resume.
+- **Running flows**: every conversation with `status: running` gets breakpoints armed on all of its flow's node ids (`PUT /v1/chat/conversations/{id}/breakpoints`). The run halts at the next node boundary with `status: paused_debug`. On resume, breakpoints are cleared and still-paused conversations are continued via `POST .../debug/continue`. Runs started *while* paused (including the AI input's own) are deliberately left alone.
+- **AI input**: a chat dock wired to `POST /v1/chat/completions`. You pick a target behaviour (`model: "flow-<name>"`; a flow named like *brain-stem* is preselected when present) and every **other** behaviour is offered to the model as an OpenAI-style client-side tool — all enabled by default, toggleable as chips. FLUJO forwards client-supplied `tools` per standard OpenAI semantics, so when the model answers with `finish_reason: "tool_calls"`, brain executes each call as its own ephemeral flow run (`model: "flow-<tool>"`), appends the result as a `role: "tool"` message, and re-sends — up to 8 rounds per turn. Each tool run is a real FLUJO conversation, so it animates live in the viewer.
+- **Continuity**: the dock keeps the full message history client-side and re-sends it each turn with `metadata.conversationId` (FLUJO treats the request's message list as the authoritative replacement). Switching the target behaviour starts a fresh conversation.
+- **Queueing**: messages typed while a turn is in flight render as dimmed bubbles and dispatch in order when the current turn finishes.
+
 ## Brains, the lobby, and the manager
 
 The **brain-manager** (`manager/`, Node + Express + dockerode) is the single server:

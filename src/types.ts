@@ -55,6 +55,7 @@ export interface InnerNode {
   id: string;
   type: NodeType;
   label: string;
+  description?: string;
   /** For mcp nodes: the bound ability (MCP server) name (status lookup). */
   server?: string;
   /** Normalized position in [-1, 1] derived from the flow editor layout. */

@@ -149,7 +149,12 @@ api.delete('/brains/:id', async (req, res) => {
  *  in the user's network instead of the stack's own (also serves as the
  *  wizard's reachability check, CORS-free). */
 api.get('/ollama/tags', async (req, res) => {
-  const base = typeof req.query.url === 'string' && req.query.url ? req.query.url.replace(/\/+$/, '') : OLLAMA_URL;
+  // Users often paste the OpenAI-compat URL FLUJO shows (…:11434/v1); the
+  // native API lives at the root, so strip a trailing /v1 before /api/tags.
+  const base =
+    typeof req.query.url === 'string' && req.query.url
+      ? req.query.url.replace(/\/+$/, '').replace(/\/v1$/, '')
+      : OLLAMA_URL;
   if (!base) return res.status(503).json({ error: 'OLLAMA_URL not configured' });
   if (!/^https?:\/\//.test(base)) return res.status(400).json({ error: 'url must start with http:// or https://' });
   try {
@@ -174,6 +179,13 @@ app.use('/api', api);
 // ---------- static UI ----------
 
 if (fs.existsSync(UI_DIR)) {
+  // The lobby is the front door of the Docker bundle. Bare `/` redirects
+  // there; viewer links keep working because they carry a query
+  // (`/?flujo=/brains/<id>/flujo` from the lobby's open buttons).
+  app.get('/', (req, res, next) => {
+    if (Object.keys(req.query).length === 0) return res.redirect('/lobby.html');
+    next();
+  });
   app.use(express.static(UI_DIR));
   app.get(/^\/(?!api|brains|flujo).*/, (_req, res) => res.sendFile(path.join(UI_DIR, 'index.html')));
 }

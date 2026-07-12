@@ -33,6 +33,11 @@ services:
     restart: unless-stopped
 
   flujo:
+    # Built from the public FLUJO repo but tagged with the GHCR name so the
+    # manager's provisioner (FLUJO_IMAGE) finds the image locally. To pull the
+    # published image instead of building, run `docker compose pull flujo`
+    # once — plain `up` prefers a local build when a `build:` section exists.
+    build: https://github.com/mario-andreschak/FLUJO.git
     image: ghcr.io/mario-andreschak/flujo:latest
     # FLUJO's own UI (flow editor) — localhost only. The editor can't live
     # behind a sub-path proxy, so it keeps its own port.

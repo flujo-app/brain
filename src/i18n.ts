@@ -54,8 +54,8 @@ const en: Record<string, string> = {
   'wiz.where.remoteSub': 'uses a paid service · the smartest minds',
 
   'wiz.net.title': 'Where does Ollama live?',
-  'wiz.net.desc': 'Enter the address of the machine in your network that runs Ollama (ollama serve).',
-  'wiz.net.ph': 'http://192.168.1.50:11434',
+  'wiz.net.desc': 'Enter the hostname or IP of the machine in your network that runs Ollama (ollama serve) — port and http:// are optional.',
+  'wiz.net.ph': '192.168.1.50 or my-pc',
   'wiz.net.hint': 'tip: on that machine, start it with OLLAMA_HOST=0.0.0.0 ollama serve so others can reach it',
   'wiz.net.checking': 'checking…',
   'wiz.net.fail': 'could not reach an Ollama server there — check the address and that “ollama serve” is running',
@@ -96,6 +96,7 @@ const en: Record<string, string> = {
   'tier.fast': 'fast & affordable',
   'tier.small': 'light — runs on most computers',
   'tier.big': 'bigger — needs a strong computer',
+  'tier.tiny': 'for the weakest computers — gives the worst responses',
   'tier.recommended': 'recommended',
 
   'wiz.soul.title': 'Give it a life goal',
@@ -149,8 +150,8 @@ const de: Record<string, string> = {
   'wiz.where.remoteSub': 'nutzt einen Bezahldienst · die klügsten Köpfe',
 
   'wiz.net.title': 'Wo wohnt Ollama?',
-  'wiz.net.desc': 'Gib die Adresse des Rechners in deinem Netzwerk ein, auf dem Ollama läuft (ollama serve).',
-  'wiz.net.ph': 'http://192.168.1.50:11434',
+  'wiz.net.desc': 'Gib den Hostnamen oder die IP des Rechners in deinem Netzwerk ein, auf dem Ollama läuft (ollama serve) — Port und http:// sind optional.',
+  'wiz.net.ph': '192.168.1.50 oder mein-pc',
   'wiz.net.hint': 'Tipp: starte es dort mit OLLAMA_HOST=0.0.0.0 ollama serve, damit andere Rechner es erreichen',
   'wiz.net.checking': 'prüfe…',
   'wiz.net.fail': 'dort war kein Ollama-Server erreichbar — prüfe die Adresse und ob „ollama serve“ läuft',
@@ -191,6 +192,7 @@ const de: Record<string, string> = {
   'tier.fast': 'schnell & günstig',
   'tier.small': 'leicht — läuft auf den meisten Rechnern',
   'tier.big': 'größer — braucht einen starken Rechner',
+  'tier.tiny': 'für die schwächsten Rechner — liefert die schlechtesten Antworten',
   'tier.recommended': 'empfohlen',
 
   'wiz.soul.title': 'Gib ihm ein Lebensziel',
@@ -244,8 +246,8 @@ const es: Record<string, string> = {
   'wiz.where.remoteSub': 'usa un servicio de pago · las mentes más brillantes',
 
   'wiz.net.title': '¿Dónde vive Ollama?',
-  'wiz.net.desc': 'Escribe la dirección de la máquina de tu red donde corre Ollama (ollama serve).',
-  'wiz.net.ph': 'http://192.168.1.50:11434',
+  'wiz.net.desc': 'Escribe el nombre de host o la IP de la máquina de tu red donde corre Ollama (ollama serve) — el puerto y http:// son opcionales.',
+  'wiz.net.ph': '192.168.1.50 o mi-pc',
   'wiz.net.hint': 'consejo: en esa máquina, arráncalo con OLLAMA_HOST=0.0.0.0 ollama serve para que otras puedan alcanzarlo',
   'wiz.net.checking': 'comprobando…',
   'wiz.net.fail': 'no se pudo alcanzar un servidor Ollama ahí — revisa la dirección y que “ollama serve” esté en marcha',
@@ -286,6 +288,7 @@ const es: Record<string, string> = {
   'tier.fast': 'rápida y económica',
   'tier.small': 'ligera — funciona en la mayoría de equipos',
   'tier.big': 'más grande — necesita un equipo potente',
+  'tier.tiny': 'para los equipos más débiles — da las peores respuestas',
   'tier.recommended': 'recomendada',
 
   'wiz.soul.title': 'Dale una meta de vida',
@@ -339,8 +342,8 @@ const fr: Record<string, string> = {
   'wiz.where.remoteSub': 'via un service payant · les esprits les plus brillants',
 
   'wiz.net.title': 'Où vit Ollama ?',
-  'wiz.net.desc': 'Saisis l’adresse de la machine de ton réseau qui fait tourner Ollama (ollama serve).',
-  'wiz.net.ph': 'http://192.168.1.50:11434',
+  'wiz.net.desc': 'Saisis le nom d’hôte ou l’IP de la machine de ton réseau qui fait tourner Ollama (ollama serve) — le port et http:// sont facultatifs.',
+  'wiz.net.ph': '192.168.1.50 ou mon-pc',
   'wiz.net.hint': 'astuce : sur cette machine, lance-le avec OLLAMA_HOST=0.0.0.0 ollama serve pour qu’elle soit joignable',
   'wiz.net.checking': 'vérification…',
   'wiz.net.fail': 'aucun serveur Ollama joignable à cette adresse — vérifie l’adresse et que « ollama serve » tourne',
@@ -381,6 +384,7 @@ const fr: Record<string, string> = {
   'tier.fast': 'rapide et abordable',
   'tier.small': 'léger — tourne sur la plupart des ordinateurs',
   'tier.big': 'plus gros — demande un ordinateur puissant',
+  'tier.tiny': 'pour les ordinateurs les plus faibles — donne les pires réponses',
   'tier.recommended': 'recommandé',
 
   'wiz.soul.title': 'Donne-lui un but de vie',

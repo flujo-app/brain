@@ -22,10 +22,19 @@ function toggleRow(label: string, on: boolean): string {
   return `<div class="setting"><span class="sw ${on ? 'on' : 'off'}"><i></i></span>${esc(label)}<em>${on ? 'on' : 'off'}</em></div>`;
 }
 
-function promptBlock(title: string, prompt: string | undefined, open: boolean): string {
-  if (!prompt?.trim()) return '';
-  return `<details${open ? ' open' : ''}><summary>${esc(title)}</summary><pre class="prompt">${esc(prompt.trim())}</pre></details>`;
+interface PromptEntry {
+  title: string;
+  text?: string;
 }
+
+/** A big, always-open prompt block for the reader panel. */
+function promptSection(p: PromptEntry): string {
+  if (!p.text?.trim()) return '';
+  return `<div class="pblock"><span class="ptitle">${esc(p.title)}</span><pre class="prompt">${esc(p.text.trim())}</pre></div>`;
+}
+
+const PANEL_W_KEY = 'brain-panel-w';
+const PANEL_COLLAPSED_KEY = 'brain-panel-collapsed';
 
 export interface RelationLine {
   synapse: Synapse;
@@ -38,7 +47,11 @@ export type ViewMode = '3d' | '2d';
 export class Hud {
   private $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
   private panel = this.$('panel');
+  private reader = this.$('reader');
   private tooltip = this.$('tooltip');
+  /** True while a behaviour / node is selected (reader + panel visible). */
+  private selectionOpen = false;
+  private panelCollapsed = localStorage.getItem(PANEL_COLLAPSED_KEY) === '1';
 
   onSearch: (q: string) => void = () => {};
   onToggleKind: (k: SynapseKind, on: boolean) => void = () => {};
@@ -76,6 +89,71 @@ export class Hud {
     follow.addEventListener('change', () => this.onFollow(follow.checked));
 
     this.$('panel-close').addEventListener('click', () => this.onCloseFocus());
+    this.$('reader-close').addEventListener('click', () => this.onCloseFocus());
+    this.$('panel-collapse').addEventListener('click', () => this.setPanelCollapsed(true));
+    this.$('panel-tab').addEventListener('click', () => this.setPanelCollapsed(false));
+
+    const savedW = Number(localStorage.getItem(PANEL_W_KEY));
+    if (savedW) this.panel.style.width = `${this.clampPanelWidth(savedW)}px`;
+    this.initPanelResize();
+  }
+
+  private setPanelCollapsed(collapsed: boolean): void {
+    this.panelCollapsed = collapsed;
+    localStorage.setItem(PANEL_COLLAPSED_KEY, collapsed ? '1' : '0');
+    this.syncPanels();
+  }
+
+  /** One place decides which selection surfaces are on screen. */
+  private syncPanels(): void {
+    this.panel.classList.toggle('hidden', !this.selectionOpen || this.panelCollapsed);
+    this.$('panel-tab').classList.toggle('hidden', !this.selectionOpen || !this.panelCollapsed);
+    this.reader.classList.toggle('hidden', !this.selectionOpen);
+    // The legend yields its corner to the reader while something is selected.
+    document.body.classList.toggle('reading', this.selectionOpen);
+  }
+
+  private clampPanelWidth(w: number): number {
+    const max = Math.max(320, Math.round(window.innerWidth * 0.55));
+    return Math.round(Math.min(Math.max(w, 260), max));
+  }
+
+  /** Drag the panel's left edge to resize it; the width survives reloads. */
+  private initPanelResize(): void {
+    const handle = this.$('panel-resize');
+    handle.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      handle.setPointerCapture(e.pointerId);
+      const move = (ev: PointerEvent) => {
+        // 22px = the panel's `right` offset in CSS.
+        this.panel.style.width = `${this.clampPanelWidth(window.innerWidth - ev.clientX - 22)}px`;
+      };
+      const up = () => {
+        handle.removeEventListener('pointermove', move);
+        localStorage.setItem(PANEL_W_KEY, String(parseInt(this.panel.style.width, 10) || 340));
+      };
+      handle.addEventListener('pointermove', move);
+      handle.addEventListener('pointerup', up, { once: true });
+    });
+  }
+
+  /** The big-type reader on the left: name, description, prompts. */
+  private showReader(
+    kicker: string,
+    kickerColor: string,
+    name: string,
+    desc: string,
+    prompts: PromptEntry[],
+    emptyNote = '',
+  ): void {
+    this.$('r-kicker').innerHTML =
+      `<span class="k"${kickerColor ? ` style="color:${kickerColor}"` : ''}>${esc(kicker)}</span>`;
+    this.$('r-name').textContent = name;
+    const d = this.$('r-desc');
+    d.textContent = desc;
+    d.style.display = desc ? '' : 'none';
+    const html = prompts.map(promptSection).join('');
+    this.$('r-prompts').innerHTML = html || (emptyNote ? `<p class="empty">${esc(emptyNote)}</p>` : '');
   }
 
   followEnabled(): boolean {
@@ -136,11 +214,15 @@ export class Hud {
 
   /** The behaviour overview panel. */
   showPanel(n: Neuron, relations: RelationLine[], servers: Record<string, ServerStatus> = {}): void {
+    this.showReader(
+      'behaviour',
+      '',
+      n.name,
+      n.description || (n.broken ? 'No connections — a dormant behaviour.' : ''),
+      [{ title: 'behaviour prompt', text: n.prompt }],
+    );
+
     this.$('p-kicker').innerHTML = '<span class="k">behaviour</span>';
-    this.$('p-name').textContent = n.name;
-    const desc = this.$('p-desc');
-    desc.textContent = n.description || (n.broken ? 'No connections — a dormant behaviour.' : '');
-    desc.style.display = desc.textContent ? '' : 'none';
 
     const chips: string[] = [];
     const c = n.counts;
@@ -154,12 +236,10 @@ export class Hud {
     for (const prov of n.providers) chips.push(`<span class="chip">${esc(providerLabel(prov))}</span>`);
     this.$('p-stats').innerHTML = chips.join('');
 
-    this.$('p-rels').innerHTML =
-      promptBlock('behaviour prompt', n.prompt, false) +
-      this.renderServers(n, servers) +
-      this.renderRelations(n, relations);
+    this.$('p-rels').innerHTML = this.renderServers(n, servers) + this.renderRelations(n, relations);
     this.$('p-hint').textContent = 'Click a node in the graph for its prompt & settings';
-    this.panel.classList.remove('hidden');
+    this.selectionOpen = true;
+    this.syncPanels();
   }
 
   /** Detail panel for one node inside the focused behaviour. */
@@ -170,13 +250,20 @@ export class Hud {
     subflowTarget: Neuron | null,
   ): void {
     const color = hex(NODE_TYPE_COLORS[node.type]);
+
+    const prompts: PromptEntry[] = [];
+    let emptyNote = '';
+    if (node.type === 'process') {
+      prompts.push({ title: 'prompt', text: node.prompt });
+      if (!node.prompt?.trim()) emptyNote = 'No prompt set on this node.';
+    } else if (node.type === 'subflow' && subflowTarget) {
+      prompts.push({ title: `prompt of "${subflowTarget.name}"`, text: subflowTarget.prompt });
+    }
+    this.showReader(`${nodeTypeLabel(node.type)} node`, color, node.label, node.description ?? '', prompts, emptyNote);
+
     this.$('p-kicker').innerHTML =
       `<button class="back" id="p-back">← ${esc(behaviour.name)}</button>` +
       `<span class="k" style="color:${color}">${nodeTypeLabel(node.type)} node</span>`;
-    this.$('p-name').textContent = node.label;
-    const desc = this.$('p-desc');
-    desc.textContent = '';
-    desc.style.display = 'none';
 
     const chips: string[] = [];
     if (node.modelName) chips.push(`<span class="chip">model <b>${esc(node.modelName)}</b></span>`);
@@ -194,8 +281,6 @@ export class Hud {
         ${toggleRow('include model prompt', node.excludeModelPrompt !== true)}
         ${toggleRow('include behaviour prompt', node.excludeStartNodePrompt !== true)}
       </div>`;
-      body += promptBlock('prompt', node.prompt, true) ||
-        '<p class="empty">No prompt set on this node.</p>';
       if (node.abilities?.length) {
         const items = node.abilities
           .map((a) => {
@@ -219,8 +304,7 @@ export class Hud {
         ${node.outputMode ? `<div class="setting"><span class="mode">out</span>${esc(node.outputMode)}</div>` : ''}
       </div>`;
       body += subflowTarget
-        ? `<p class="jump">calls <a href="#" id="p-jump">${esc(subflowTarget.name)}</a></p>` +
-          promptBlock('target behaviour prompt', subflowTarget.prompt, false)
+        ? `<p class="jump">calls <a href="#" id="p-jump">${esc(subflowTarget.name)}</a></p>`
         : '<p class="empty">Target behaviour not found.</p>';
     } else if (node.type === 'finish') {
       body += '<p class="empty">End of the behaviour — the reply is returned here.</p>';
@@ -228,7 +312,8 @@ export class Hud {
 
     this.$('p-rels').innerHTML = body;
     this.$('p-hint').textContent = 'Esc or ← to go back · click empty space for overview';
-    this.panel.classList.remove('hidden');
+    this.selectionOpen = true;
+    this.syncPanels();
 
     document.getElementById('p-back')?.addEventListener('click', () => this.onBackToBehaviour());
     const jump = document.getElementById('p-jump');
@@ -285,6 +370,7 @@ export class Hud {
   }
 
   hidePanel(): void {
-    this.panel.classList.add('hidden');
+    this.selectionOpen = false;
+    this.syncPanels();
   }
 }

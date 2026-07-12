@@ -114,7 +114,9 @@ export async function fetchBrain(): Promise<BrainData | null> {
     const base = await resolveBase();
     if (!base) return null;
     const flows = await fetchJson<RawFlow[]>(`${base}/api/flow`);
-    if (!Array.isArray(flows) || !flows.length) return null;
+    // An empty list is a valid answer (fresh instance) — only a non-array
+    // response means we didn't actually talk to FLUJO.
+    if (!Array.isArray(flows)) return null;
     const [models, servers] = await Promise.all([fetchModels(base), fetchServers(base)]);
     const graph = distill(flows, models, servers);
     return { graph, hash: hashString(JSON.stringify({ flows, models, servers })) };

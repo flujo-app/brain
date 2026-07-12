@@ -51,6 +51,8 @@ This is not a static picture. While a flow runs in FLUJO, brain rides its **serv
 
 New flow saved? New MCP server installed? A server drops its connection? The brain **rebuilds itself in seconds** — it polls FLUJO continuously and reflects every change. Nothing is cached to disk; what you see is what's running.
 
+And when you want a word with it: hit **⏸ pause**. The heartbeat stops, every running flow freezes mid-thought, and an **AI input window** opens — talk directly to any behaviour, with all the others offered to it as tools it can call (each call runs live in the visualization). Type as fast as you like; messages queue and dispatch in order. Press resume and the mind picks up right where it left off.
+
 ## 🌱 Grow a brain — the wizard
 
 Beyond visualizing one workspace, brain has a **lobby** where you grow entire autonomous minds — and the wizard is deliberately non-technical. Three questions, zero jargon:

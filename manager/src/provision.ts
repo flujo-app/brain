@@ -36,7 +36,9 @@ async function waitForFlujo(flujo: FlujoClient, timeoutMs: number): Promise<void
 /** Pull an Ollama tag (streams until done) and register it as a FLUJO model.
  *  spec.baseUrl points at an Ollama elsewhere in the network; default is the stack's own. */
 async function setupOllamaModel(flujo: FlujoClient, spec: Extract<ModelSpec, { mode: 'ollama' }>): Promise<FlujoModel> {
-  const base = (spec.baseUrl ?? OLLAMA_URL)?.replace(/\/+$/, '');
+  // Accept FLUJO-style …/v1 URLs too — /api/pull is on the native root, and
+  // /v1 is re-appended below when the model is registered in FLUJO.
+  const base = (spec.baseUrl ?? OLLAMA_URL)?.replace(/\/+$/, '').replace(/\/v1$/, '');
   if (!base) throw new Error('OLLAMA_URL is not configured — cannot pull local models.');
   const res = await fetch(`${base}/api/pull`, {
     method: 'POST',

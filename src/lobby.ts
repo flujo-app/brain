@@ -39,7 +39,7 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
 // with plain-language tiers.
 // ---------------------------------------------------------------------------
 
-type Tier = 'best' | 'balanced' | 'fast' | 'small' | 'big';
+type Tier = 'best' | 'balanced' | 'fast' | 'small' | 'big' | 'tiny';
 
 interface ModelChoice {
   id: string;
@@ -68,6 +68,7 @@ const OLLAMA: Provider = {
     { id: 'qwen2.5:7b', label: 'Qwen 2.5 · 7B', tier: 'balanced', recommended: true },
     { id: 'llama3.1:8b', label: 'Llama 3.1 · 8B', tier: 'small' },
     { id: 'qwen2.5:14b', label: 'Qwen 2.5 · 14B', tier: 'big' },
+    { id: 'qwen3.5:0.8b', label: 'Qwen 3.5 · 0.8B', tier: 'tiny' },
   ],
 };
 
@@ -465,6 +466,25 @@ function goBack(): void {
   if (i > 0) goTo(steps[i - 1]);
 }
 
+/** Turn whatever the user typed — `M`, `192.168.1.50`, `M:11434`,
+ *  `http://M:11434/v1` — into a canonical Ollama base URL. Scheme defaults to
+ *  http, port to Ollama's 11434 (unless https, whose default port stays 443),
+ *  and any path like /v1 is dropped. Returns null if it isn't an address. */
+function normalizeOllamaAddress(raw: string): string | null {
+  let s = raw.trim();
+  if (!s) return null;
+  if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(s)) s = `http://${s}`;
+  let url: URL;
+  try {
+    url = new URL(s);
+  } catch {
+    return null;
+  }
+  if (!/^https?:$/.test(url.protocol) || !url.hostname) return null;
+  const port = url.port || (url.protocol === 'https:' ? '' : '11434');
+  return `${url.protocol}//${url.hostname}${port ? `:${port}` : ''}`;
+}
+
 /** One big tappable choice tile. */
 function choiceHtml(opts: { key: string; icon: string; color?: string; title: string; sub: string; badge?: string }): string {
   const mark =
@@ -679,13 +699,15 @@ function wireWizard(): void {
   if (netInput) {
     const next = wizard.querySelector<HTMLButtonElement>('#wiz-next')!;
     const sync = () => {
-      wiz.networkUrl = netInput.value.trim().replace(/\/+$/, '');
-      next.disabled = wiz.busy || !/^https?:\/\/.+/.test(wiz.networkUrl);
+      wiz.networkUrl = netInput.value;
+      next.disabled = wiz.busy || !normalizeOllamaAddress(netInput.value);
     };
     // Reach the server through the manager (no CORS) and grab its installed
     // models on the way — the model step offers them like local tags.
     const advance = async () => {
-      if (wiz.busy || !wiz.networkUrl) return;
+      const base = normalizeOllamaAddress(netInput.value);
+      if (wiz.busy || !base) return;
+      wiz.networkUrl = base;
       wiz.busy = true;
       wiz.error = null;
       next.disabled = true;

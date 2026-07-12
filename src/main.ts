@@ -4,6 +4,7 @@ import { ExecutionWatcher, type BrainActivityEvent } from './data/execution';
 import { Brain } from './scene/brain';
 import { Brain2D } from './scene2d/brain2d';
 import { Hud, type ViewMode } from './ui/hud';
+import { AiDock } from './ui/aichat';
 import type { BrainGraph } from './types';
 
 const VIEW_KEY = 'brain-view';
@@ -47,6 +48,7 @@ function freshCanvas(): HTMLCanvasElement {
 
 async function boot() {
   const hud = new Hud();
+  const aiDock = new AiDock();
   let mode = initialMode();
   let brain: Brain | Brain2D | null = null;
   let graph: BrainGraph | null = null;
@@ -73,9 +75,15 @@ async function boot() {
   const apply = (data: { graph: BrainGraph; hash: string }) => {
     hash = data.hash;
     graph = data.graph;
-    if (brain) brain.setGraph(graph);
-    else createRenderer();
-    setBadge('● live from FLUJO', true);
+    if (graph.neurons.length) {
+      if (brain) brain.setGraph(graph);
+      else createRenderer();
+      setBadge('● live from FLUJO', true);
+    } else {
+      // Reachable but empty (fresh instance) — distinct from unreachable.
+      setBadge('● FLUJO connected — no flows yet', true);
+    }
+    aiDock.setGraph(graph);
   };
 
   const first = await fetchBrain();

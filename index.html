@@ -21,6 +21,7 @@
       </div>
       <div class="controls">
         <a id="lobby-link" class="lobby-link hidden" href="./lobby.html">⬡ brains</a>
+        <button id="pause-btn" title="Pause the heartbeat and every running flow, then talk to the brain">⏸ pause</button>
         <label class="group-picker">
           <span>view</span>
           <select id="view-mode">
@@ -54,15 +55,24 @@
       </div>
     </aside>
 
+    <section id="reader" class="hidden">
+      <button id="reader-close" aria-label="close">×</button>
+      <div id="r-kicker"></div>
+      <h2 id="r-name"></h2>
+      <p id="r-desc"></p>
+      <div id="r-prompts"></div>
+    </section>
+
     <section id="panel" class="hidden">
+      <div id="panel-resize" title="drag to resize"></div>
+      <button id="panel-collapse" aria-label="hide details" title="hide details">⇥</button>
       <button id="panel-close" aria-label="close">×</button>
       <div id="p-kicker"></div>
-      <h2 id="p-name"></h2>
-      <p id="p-desc"></p>
       <div id="p-stats"></div>
       <div id="p-rels"></div>
       <p id="p-hint">Drag to orbit · scroll to zoom · click a node for details</p>
     </section>
+    <button id="panel-tab" class="hidden" title="show details">details</button>
 
     <div id="activity" class="hidden">
       <span class="pulse"></span>
@@ -76,6 +86,27 @@
       <span id="stat-sec">—</span> sections ·
       <span id="stat-hint">click empty space to reset</span>
     </footer>
+
+    <section id="ai-dock" class="hidden">
+      <header>
+        <span class="k">the brain is paused · talk to it</span>
+        <button id="ai-close" aria-label="resume and close">×</button>
+      </header>
+      <div class="ai-row">
+        <label>talk to
+          <select id="ai-target"></select>
+        </label>
+      </div>
+      <details class="ai-toolbox">
+        <summary>behaviours it may use as tools <b id="ai-tool-count">0</b></summary>
+        <div id="ai-tools"></div>
+      </details>
+      <div id="ai-log"></div>
+      <div class="ai-inputrow">
+        <input id="ai-input" type="text" placeholder="say something… (queues while it thinks)" autocomplete="off" spellcheck="false" />
+        <button id="ai-send" aria-label="send">↑</button>
+      </div>
+    </section>
 
     <div id="tooltip" class="hidden"></div>
 

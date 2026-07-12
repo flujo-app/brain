@@ -48,6 +48,7 @@ function toInner(n: RawNode): Omit<InnerNode, 'x' | 'y'> {
     id: n.id,
     type,
     label: n.data?.label ?? type,
+    description: n.data?.description || undefined,
   };
   if (type === 'process') {
     inner.prompt = prop<string>(n, 'promptTemplate') || undefined;
