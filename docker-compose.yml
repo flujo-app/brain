@@ -30,7 +30,10 @@ services:
       - DOCKER_NETWORK=brain-net
       - MANAGER_INTERNAL_URL=http://brain
     depends_on:
+      # Both listed so `docker compose up brain` brings the whole stack —
+      # provisioning needs ollama for local models, not just the default flujo.
       - flujo
+      - ollama
     networks: [brain-net]
     restart: unless-stopped
 

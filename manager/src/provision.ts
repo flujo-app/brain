@@ -40,10 +40,19 @@ async function setupOllamaModel(flujo: FlujoClient, spec: Extract<ModelSpec, { m
   // /v1 is re-appended below when the model is registered in FLUJO.
   const base = (spec.baseUrl ?? OLLAMA_URL)?.replace(/\/+$/, '').replace(/\/v1$/, '');
   if (!base) throw new Error('OLLAMA_URL is not configured — cannot pull local models.');
-  const res = await fetch(`${base}/api/pull`, {
-    method: 'POST',
-    body: JSON.stringify({ name: spec.tag }),
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${base}/api/pull`, {
+      method: 'POST',
+      body: JSON.stringify({ name: spec.tag }),
+    });
+  } catch (err) {
+    // A bare 'fetch failed' helps nobody — say who was unreachable.
+    throw new Error(
+      `Ollama at ${base} is unreachable (${(err as Error).cause instanceof Error ? (err as Error & { cause: Error }).cause.message : (err as Error).message}) — ` +
+        `is the ollama service running? (docker compose up -d starts the whole stack)`,
+    );
+  }
   if (!res.ok || !res.body) throw new Error(`ollama pull ${spec.tag} failed: ${res.status} ${await res.text()}`);
   // Drain the progress stream; the pull is done when the stream ends.
   for await (const _ of res.body) {

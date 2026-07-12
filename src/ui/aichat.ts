@@ -250,7 +250,9 @@ export class AiDock {
     else if (kind === 'no-manager') {
       this.setup.innerHTML =
         '<p class="ask">🧠 This brain has no <b>brain-stem</b> — behaviours, but no self and no life goal.</p>' +
-        '<p class="sub">Start the <b>brain-manager</b> to grow one into this running instance (it hosts the brain-stem\'s tool belt).</p>';
+        '<p class="sub">This page is running without the <b>brain-manager</b>, which hosts the brain-stem\'s tool belt. ' +
+        'Open this instance through a running manager instead — the Docker bundle at <code>http://127.0.0.1:8080</code>, ' +
+        'or <code>npm run standalone</code> from the brain repo — and this card will offer to grow one.</p>';
     } else {
       await this.renderGrowCard();
     }
