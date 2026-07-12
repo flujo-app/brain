@@ -121,6 +121,16 @@ npm install && npm run dev
 
 Open the URL, and if FLUJO is at `localhost:4200`, the brain boots itself the moment it finds it. Not on 4200? Point it anywhere with `?flujo=<url>`. Weak GPU? There's a full **2D map renderer** (Canvas 2D, no shaders) that low-end machines get automatically.
 
+### 🧍 Standalone mode (no Docker, one brain)
+
+Want the full experience — same-origin proxy, live execution animation, brain-stem tools — without Docker?
+
+```bash
+npm install && npm run standalone
+```
+
+One command, one brain, `http://localhost:8080`. The front door decides for you: if a FLUJO is already running on `localhost:4200`, you land **straight in the viewer** — no lobby detour. No FLUJO and no Docker? You get the lobby in adopt mode, where you can point brain at any FLUJO you start by hand. (Docker installed? Then the lobby stays the front door and can spawn brains as usual.)
+
 ## 🗺️ Where this is going
 
 Birth and death animations for neurons, a **timeline scrubber** ("this brain at day 3"), approval gates rendered *inside* the visualization so a brain can ask permission before acting, and a multi-brain constellation view. The full plan — verified against FLUJO's actual API surface — is in [ROADMAP.md](ROADMAP.md).

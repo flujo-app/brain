@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "standalone": "npm run build && npm install --prefix manager && npm run standalone --prefix manager"
   },
   "keywords": [
     "flujo",

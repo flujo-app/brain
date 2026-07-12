@@ -178,13 +178,37 @@ app.use('/api', api);
 
 // ---------- static UI ----------
 
+/**
+ * Front door for bare `/`: multi-brain installs (registered brains, or Docker
+ * available to create them) land in the lobby. A bare machine with a FLUJO
+ * already running on the default URL goes straight to the single-brain
+ * viewer instead — no lobby detour when there is nothing to manage.
+ * Unreachable FLUJO without Docker still means lobby (adopt mode).
+ */
+let frontDoor: { at: number; lobby: boolean } | null = null;
+async function lobbyIsFrontDoor(): Promise<boolean> {
+  if (frontDoor && Date.now() - frontDoor.at < 10_000) return frontDoor.lobby;
+  let lobby = true;
+  if (registry.list().length === 0 && !(await dockerAvailable())) {
+    try {
+      const r = await fetch(`${FLUJO_DEFAULT_URL}/api/flow`, { signal: AbortSignal.timeout(1500) });
+      lobby = !r.ok;
+    } catch {
+      lobby = true;
+    }
+  }
+  frontDoor = { at: Date.now(), lobby };
+  return lobby;
+}
+
 if (fs.existsSync(UI_DIR)) {
-  // The lobby is the front door of the Docker bundle. Bare `/` redirects
-  // there; viewer links keep working because they carry a query
+  // Viewer links keep working because they carry a query
   // (`/?flujo=/brains/<id>/flujo` from the lobby's open buttons).
-  app.get('/', (req, res, next) => {
-    if (Object.keys(req.query).length === 0) return res.redirect('/lobby.html');
-    next();
+  app.get('/', async (req, res, next) => {
+    if (Object.keys(req.query).length > 0) return next();
+    if (await lobbyIsFrontDoor()) return res.redirect('/lobby.html');
+    // Single-brain mode: viewer on the default FLUJO via the same-origin proxy.
+    res.redirect(`/?flujo=${encodeURIComponent('/flujo')}`);
   });
   app.use(express.static(UI_DIR));
   app.get(/^\/(?!api|brains|flujo).*/, (_req, res) => res.sendFile(path.join(UI_DIR, 'index.html')));
