@@ -1,0 +1,4 @@
+# Shell scripts must keep LF even on Windows checkouts (CRLF breaks bash).
+*.sh text eol=lf
+# PowerShell is happy either way; keep it native.
+*.ps1 text
