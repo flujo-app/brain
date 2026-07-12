@@ -85,11 +85,31 @@ Guardrails are enforced at a single choke point — brain's MCP server — not l
 
 ## 🐳 One command to life
 
+You need two things installed first — that's the entire prerequisite list:
+
+| Prerequisite | Why | Where to get it |
+| --- | --- | --- |
+| **Git** | clones this repository | [git-scm.com/downloads](https://git-scm.com/downloads) |
+| **Docker Desktop** (Windows / macOS) or **Docker Engine + Compose plugin** (Linux) | runs the stack and isolates every brain | [docker.com/products/docker-desktop](https://www.docker.com/products/docker-desktop/) · [Engine install docs](https://docs.docker.com/engine/install/) |
+
+> 💡 On Windows, Docker Desktop runs on the WSL 2 backend — its installer sets that up for you. Before continuing, make sure Docker is actually **running**: `docker info` should print without errors (on Windows/macOS that means the Docker Desktop app is open).
+
+Then:
+
 ```bash
+git clone https://github.com/flujo-app/brain.git
+cd brain
 docker compose up
 ```
 
-That's the whole install. You get:
+☕ **The first start takes a few minutes** — Docker builds the brain image and builds FLUJO from its GitHub repo. Skip the FLUJO build by pulling the prebuilt image first: `docker compose pull flujo`. Every start after the first takes seconds. When the log settles, open:
+
+| | |
+| --- | --- |
+| 🧠 **brain** — lobby + viewer | [http://localhost:8080](http://localhost:8080) |
+| 🌊 **FLUJO** — flow editor | [http://localhost:4200](http://localhost:4200) |
+
+Stop it with `docker compose down` — your brains survive in Docker volumes and wake up on the next `up`. And here's what you get:
 
 ```
         your browser ── localhost only ──┐
@@ -111,11 +131,31 @@ That's the whole install. You get:
 
 > ⚠️ **Localhost only, by design.** FLUJO has no auth layer, and the manager holds the Docker socket. Every published port binds to `127.0.0.1`. Never expose this stack without your own authenticating reverse proxy — details in the [technical docs](docs/TECHNICAL.md#security-model).
 
-## 🚀 Try it in 30 seconds
+### ⚡ Zero prerequisites? Use the installer
 
-Already running FLUJO? No Docker needed — brain is a static site:
+One line checks for Git and Docker (or Node.js), installs what's missing, clones brain, registers a global `brain` command, and starts everything:
+
+**Windows** (PowerShell):
+
+```powershell
+irm https://raw.githubusercontent.com/flujo-app/brain/main/scripts/install.ps1 | iex
+```
+
+**macOS / Linux**:
 
 ```bash
+curl -fsSL https://raw.githubusercontent.com/flujo-app/brain/main/scripts/install.sh | bash
+```
+
+The installer asks a handful of questions — Docker or standalone mode, where to install, desktop shortcut, start now? — and from then on, typing `brain` in any terminal brings the whole stack up. Re-running the installer **updates** an existing install. For unattended installs, drive it with environment variables (`BRAIN_MODE=docker|standalone`, `BRAIN_DIR`, `BRAIN_BRANCH`, `BRAIN_START=1`) — see [`scripts/install.ps1`](scripts/install.ps1) / [`scripts/install.sh`](scripts/install.sh).
+
+## 🚀 Try it in 30 seconds
+
+Already running FLUJO? No Docker needed — brain is a static site. All it takes is [Node.js](https://nodejs.org) ≥ 20 (and Git for the clone):
+
+```bash
+git clone https://github.com/flujo-app/brain.git
+cd brain
 npm install && npm run dev
 ```
 
@@ -123,13 +163,13 @@ Open the URL, and if FLUJO is at `localhost:4200`, the brain boots itself the mo
 
 ### 🧍 Standalone mode (no Docker, one brain)
 
-Want the full experience — same-origin proxy, live execution animation, brain-stem tools — without Docker?
+Want the full experience — same-origin proxy, live execution animation, brain-stem tools — without Docker? Same prerequisites as above (Node.js ≥ 20 + Git), then:
 
 ```bash
 npm install && npm run standalone
 ```
 
-One command, one brain, `http://localhost:8080`. The front door decides for you: if a FLUJO is already running on `localhost:4200`, you land **straight in the viewer** — no lobby detour. No FLUJO and no Docker? You get the lobby in adopt mode, where you can point brain at any FLUJO you start by hand. (Docker installed? Then the lobby stays the front door and can spawn brains as usual.)
+One command, one brain, `http://localhost:8080`. (The installer above sets this mode up for you too — pick *standalone* when it asks, or set `BRAIN_MODE=standalone`.) The front door decides for you: if a FLUJO is already running on `localhost:4200`, you land **straight in the viewer** — no lobby detour. No FLUJO and no Docker? You get the lobby in adopt mode, where you can point brain at any FLUJO you start by hand. (Docker installed? Then the lobby stays the front door and can spawn brains as usual.)
 
 ## 🗺️ Where this is going
 
