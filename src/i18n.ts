@@ -101,8 +101,6 @@ const en: Record<string, string> = {
   'tier.recommended': 'recommended',
 
   'wiz.soul.title': 'Give it a life goal',
-  'wiz.soul.name': 'name',
-  'wiz.soul.namePh': 'ada',
   'wiz.soul.goal': 'life goal',
   'wiz.soul.goalPh': 'Keep my GitHub issues tidy and my notes organized. Learn whatever helps.',
   'wiz.soul.goalHint': 'what should this brain care about? plain words are fine',
@@ -198,8 +196,6 @@ const de: Record<string, string> = {
   'tier.recommended': 'empfohlen',
 
   'wiz.soul.title': 'Gib ihm ein Lebensziel',
-  'wiz.soul.name': 'Name',
-  'wiz.soul.namePh': 'ada',
   'wiz.soul.goal': 'Lebensziel',
   'wiz.soul.goalPh': 'Halte meine GitHub-Issues aufgeräumt und meine Notizen sortiert. Lerne, was dabei hilft.',
   'wiz.soul.goalHint': 'worum soll sich dieses Gehirn kümmern? einfache Worte genügen',
@@ -295,8 +291,6 @@ const es: Record<string, string> = {
   'tier.recommended': 'recomendada',
 
   'wiz.soul.title': 'Dale una meta de vida',
-  'wiz.soul.name': 'nombre',
-  'wiz.soul.namePh': 'ada',
   'wiz.soul.goal': 'meta de vida',
   'wiz.soul.goalPh': 'Mantén mis issues de GitHub ordenados y mis notas organizadas. Aprende lo que haga falta.',
   'wiz.soul.goalHint': '¿de qué debería ocuparse este cerebro? con palabras sencillas basta',
@@ -392,8 +386,6 @@ const fr: Record<string, string> = {
   'tier.recommended': 'recommandé',
 
   'wiz.soul.title': 'Donne-lui un but de vie',
-  'wiz.soul.name': 'nom',
-  'wiz.soul.namePh': 'ada',
   'wiz.soul.goal': 'but de vie',
   'wiz.soul.goalPh': 'Garde mes issues GitHub triées et mes notes organisées. Apprends ce qui peut aider.',
   'wiz.soul.goalHint': 'de quoi ce cerveau doit-il se soucier ? des mots simples suffisent',

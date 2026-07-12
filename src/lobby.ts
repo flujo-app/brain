@@ -395,7 +395,6 @@ interface WizState {
   apiKey: string;
   model: string | null;
   customModel: boolean;
-  name: string;
   goal: string;
   adopt: boolean;
   existingId: string;
@@ -413,7 +412,6 @@ const freshWiz = (): WizState => ({
   apiKey: '',
   model: null,
   customModel: false,
-  name: '',
   goal: '',
   adopt: false,
   existingId: '',
@@ -604,9 +602,6 @@ function stepBodyHtml(): string {
             .join('')
         : `<option value="">${esc(t('wiz.adv.existingNew'))}</option>`;
       return `<h3>${esc(t('wiz.soul.title'))}</h3>
-        <label class="wiz-field">${esc(t('wiz.soul.name'))}
-          <input id="wiz-name" maxlength="40" autocomplete="off" placeholder="${esc(t('wiz.soul.namePh'))}" value="${esc(wiz.name)}" />
-        </label>
         <label class="wiz-field">${esc(t('wiz.soul.goal'))}
           <textarea id="wiz-goal" rows="3" placeholder="${esc(t('wiz.soul.goalPh'))}">${esc(wiz.goal)}</textarea>
           <small>${esc(t('wiz.soul.goalHint'))}</small>
@@ -769,18 +764,15 @@ function wireWizard(): void {
     next.addEventListener('click', goNext);
   }
 
-  const nameInput = wizard.querySelector<HTMLInputElement>('#wiz-name');
-  if (nameInput) {
-    const goalInput = wizard.querySelector<HTMLTextAreaElement>('#wiz-goal')!;
+  const goalInput = wizard.querySelector<HTMLTextAreaElement>('#wiz-goal');
+  if (goalInput) {
     const createBtn = wizard.querySelector<HTMLButtonElement>('#wiz-create')!;
     const adopt = wizard.querySelector<HTMLInputElement>('#wiz-adopt')!;
     const heartbeat = wizard.querySelector<HTMLInputElement>('#wiz-heartbeat')!;
     const sync = () => {
-      wiz.name = nameInput.value.trim();
       wiz.goal = goalInput.value.trim();
-      createBtn.disabled = !wiz.name || !wiz.goal || wiz.busy;
+      createBtn.disabled = !wiz.goal || wiz.busy;
     };
-    nameInput.addEventListener('input', sync);
     goalInput.addEventListener('input', sync);
     adopt.addEventListener('change', () => {
       wiz.adopt = adopt.checked;
@@ -811,7 +803,7 @@ function wireWizard(): void {
     });
     createBtn.addEventListener('click', () => void createBrain());
     sync();
-    nameInput.focus();
+    goalInput.focus();
   }
 }
 
@@ -824,7 +816,7 @@ async function createBrain(): Promise<void> {
         : { mode: 'ollama' as const, tag: wiz.model!, baseUrl: wiz.where === 'network' ? wiz.networkUrl : undefined };
 
   const body = {
-    name: wiz.name,
+    // No name — the manager generates a friendly one.
     lifeGoal: wiz.goal,
     model,
     adoptUrl: wiz.adopt ? 'default' : undefined,

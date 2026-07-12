@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import express, { type Request, type Response } from 'express';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { Registry, newBrainRecord } from './registry.js';
+import { generateBrainName } from './names.js';
 import { buildBrainstemServer } from './brainstem.js';
 import { FlujoClient } from './flujo.js';
 import { provisionBrain, deprovisionBrain } from './provision.js';
@@ -118,17 +119,20 @@ api.get('/brains/:id', (req, res) => {
 
 api.post('/brains', async (req, res) => {
   const body = req.body as CreateBrainRequest;
-  if (!body?.name?.trim() || !body?.lifeGoal?.trim() || !body?.model) {
-    return res.status(400).json({ error: 'name, lifeGoal and model are required' });
+  if (!body?.lifeGoal?.trim() || !body?.model) {
+    return res.status(400).json({ error: 'lifeGoal and model are required' });
   }
-  if (registry.list().some((b) => b.name === body.name.trim())) {
+  // The name is just a handle — auto-generated unless the caller insists.
+  const taken = new Set(registry.list().map((b) => b.name));
+  const name = body.name?.trim() || generateBrainName(taken);
+  if (taken.has(name)) {
     return res.status(409).json({ error: 'a brain with that name already exists' });
   }
   // 'default' = adopt the stack's default FLUJO without the browser needing
   // to know its internal URL.
   const adoptsDefault = body.adoptUrl === 'default';
   if (adoptsDefault) body.adoptUrl = FLUJO_DEFAULT_URL;
-  const brain = newBrainRecord(body.name.trim(), body.lifeGoal.trim());
+  const brain = newBrainRecord(name, body.lifeGoal.trim());
   // Adopted instances: the editor link is the URL as the browser knows it.
   if (body.adoptUrl) {
     brain.editorUrl = (adoptsDefault ? FLUJO_DEFAULT_PUBLIC_URL : body.adoptUrl).replace(/\/+$/, '');

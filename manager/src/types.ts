@@ -33,7 +33,8 @@ export type ModelSpec =
   | { mode: 'existing'; id: string };
 
 export interface CreateBrainRequest {
-  name: string;
+  /** Optional — the manager auto-generates a friendly name when absent. */
+  name?: string;
   lifeGoal: string;
   model: ModelSpec;
   /** Adopt a running FLUJO instead of provisioning a container (dev mode). */

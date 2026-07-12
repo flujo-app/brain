@@ -317,7 +317,6 @@ export class AiDock {
     const crons = CRONS.map((c, i) => `<option value="${c.cron}"${i === 0 ? ' selected' : ''}>${c.label}</option>`);
     this.setup.innerHTML =
       '<p class="ask">🧠 This brain has no <b>brain-stem</b> — behaviours, but no self and no life goal. Grow one in this running instance?</p>' +
-      '<input id="grow-name" value="brain" placeholder="name" />' +
       '<textarea id="grow-goal" rows="3" placeholder="its life goal — what should this mind live for?"></textarea>' +
       `<select id="grow-model">${options.join('')}</select>` +
       `<div class="row"><label class="hb"><input type="checkbox" id="grow-hb" checked /> heartbeat</label>` +
@@ -345,7 +344,6 @@ export class AiDock {
   /** Grow a brain-stem into the running instance via the brain-manager. */
   private async growBrainstem(btn: HTMLButtonElement): Promise<void> {
     const base = flujoBase()!;
-    const name = this.setup.querySelector<HTMLInputElement>('#grow-name')?.value.trim() || 'brain';
     const lifeGoal = this.setup.querySelector<HTMLTextAreaElement>('#grow-goal')?.value.trim() ?? '';
     const modelId = this.setup.querySelector<HTMLSelectElement>('#grow-model')?.value ?? '';
     const heartbeat = this.setup.querySelector<HTMLInputElement>('#grow-hb')?.checked ?? true;
@@ -367,7 +365,7 @@ export class AiDock {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          name,
+          // No name — the manager generates a friendly one.
           lifeGoal,
           model: { mode: 'existing', id: modelId },
           adoptUrl,
