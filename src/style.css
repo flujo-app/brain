@@ -502,6 +502,31 @@ body.reading #legend { display: none; }
 .flow-label .t { font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; font-weight: 700; }
 .flow-label .l { color: var(--fg); }
 
+/* Chat bubbles: the brain speaking, floating over the neuron that said it */
+.bubble-layer { position: fixed; inset: 0; z-index: 6; pointer-events: none; overflow: hidden; }
+.chat-bubble {
+  position: absolute; top: 0; left: 0;
+  width: max-content; max-width: 300px;
+  padding: 8px 12px;
+  border-radius: 13px; border-bottom-left-radius: 4px;
+  background: rgba(12, 17, 34, 0.88);
+  border: 1px solid var(--border);
+  backdrop-filter: blur(4px);
+  box-shadow: 0 8px 28px rgba(0,0,0,0.45);
+  font-size: 12.5px; line-height: 1.45; color: var(--fg);
+  opacity: 0;
+  will-change: transform, opacity;
+}
+.chat-bubble .who {
+  font-size: 10px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.08em;
+  color: var(--subflow); margin-bottom: 2px;
+}
+.chat-bubble .text {
+  white-space: pre-wrap; word-break: break-word;
+  max-height: 7.3em; overflow: hidden;
+}
+
 .hidden { display: none !important; }
 
 /* ---------- lobby ---------- */

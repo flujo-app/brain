@@ -25,6 +25,7 @@ import { FlowGraph } from './flowGraph';
 import { StarField } from './stars';
 import { SynapseField } from './synapses';
 import type { Hud, RelationLine } from '../ui/hud';
+import { ChatBubbleLayer } from '../ui/bubbles';
 import type { BrainActivityEvent } from '../data/execution';
 
 const FOV = 55;
@@ -72,6 +73,9 @@ export class Brain {
   private convFlows = new Map<string, Set<string>>();
   private followExec = true;
   private hudActivity: { flowId: string | null; detail?: string } | null = null;
+  /** Chat output floating above the behaviour that produced it. */
+  private bubbles = new ChatBubbleLayer();
+  private bubbleV = new Vector3();
 
   private targetLookAt = new Vector3();
   /** Desired camera position while flying in/out of a focus; null = free. */
@@ -151,6 +155,7 @@ export class Brain {
     this.composer.dispose();
     this.renderer.dispose();
     this.renderer.forceContextLoss();
+    this.bubbles.dispose();
     this.hud.hideTooltip();
     this.hud.setActivity(null);
     this.hud.hidePanel();
@@ -460,6 +465,13 @@ export class Brain {
         this.touchFlow(e.conversationId, e.flowId);
         this.hudActivity = { flowId: e.flowId, detail: e.toolName ? `tool ${e.toolName}` : undefined };
         break;
+      case 'message':
+        this.touchFlow(e.conversationId, e.flowId);
+        if (e.text) {
+          const name = e.flowId ? this.graph.neurons.find((n) => n.id === e.flowId)?.name : undefined;
+          this.bubbles.push(name ? e.flowId : null, name ?? 'brain', e.text);
+        }
+        break;
       case 'run-done':
         this.convFlows.delete(e.conversationId);
         this.flowGraph?.setActive(null);
@@ -621,6 +633,16 @@ export class Brain {
 
     this.labels?.update(this.camera, window.innerWidth, window.innerHeight);
     this.flowLabels?.update(this.camera, window.innerWidth, window.innerHeight);
+    this.bubbles.update((flowId) => {
+      const pos = this.layout.positions.get(flowId);
+      if (!pos) return null;
+      this.bubbleV.copy(pos).project(this.camera);
+      if (this.bubbleV.z > 1) return null; // behind the camera
+      return {
+        x: (this.bubbleV.x * 0.5 + 0.5) * window.innerWidth,
+        y: (-this.bubbleV.y * 0.5 + 0.5) * window.innerHeight,
+      };
+    });
     this.composer.render();
   }
 

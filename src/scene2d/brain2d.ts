@@ -4,6 +4,7 @@ import { groupNeurons, type GroupMode, type Grouping } from '../grouping';
 import { computeSectionedLayout } from '../layout/sectionedLayout';
 import { neuronRadius } from '../scene/stars';
 import type { Hud, RelationLine } from '../ui/hud';
+import { ChatBubbleLayer } from '../ui/bubbles';
 import type { BrainActivityEvent } from '../data/execution';
 import { buildStarfield, glowSprite, nebulaSprite, toward } from './sprites';
 import { FlowGraph2D } from './flowGraph2d';
@@ -91,6 +92,8 @@ export class Brain2D {
   private edgeBoost: number[] = [];
   private followExec = true;
   private hudActivity: { flowId: string | null; detail?: string } | null = null;
+  /** Chat output floating above the behaviour that produced it. */
+  private bubbles = new ChatBubbleLayer();
 
   // Eased visual state.
   private focusEase = 0; // 0 = overview, 1 = flow graph fully in
@@ -250,6 +253,7 @@ export class Brain2D {
     cancelAnimationFrame(this.raf);
     window.removeEventListener('resize', this.onResize);
     window.removeEventListener('keydown', this.onKeyDown);
+    this.bubbles.dispose();
     this.hud.hideTooltip();
     this.hud.setActivity(null);
     this.hud.hidePanel();
@@ -594,6 +598,13 @@ export class Brain2D {
         this.touchFlow(e.conversationId, e.flowId);
         this.hudActivity = { flowId: e.flowId, detail: e.toolName ? `tool ${e.toolName}` : undefined };
         break;
+      case 'message':
+        this.touchFlow(e.conversationId, e.flowId);
+        if (e.text) {
+          const name = e.flowId ? this.graph.neurons.find((n) => n.id === e.flowId)?.name : undefined;
+          this.bubbles.push(name ? e.flowId : null, name ?? 'brain', e.text);
+        }
+        break;
       case 'run-done':
         this.convFlows.delete(e.conversationId);
         if (this.flowGraph?.setActive(null)) this.needsDraw = true;
@@ -748,6 +759,15 @@ export class Brain2D {
       this.dirty = false;
       this.needsDraw = true;
     }
+
+    // Bubbles are DOM, not canvas — they age and track their anchors every
+    // frame even while the canvas itself skips redraws.
+    this.bubbles.update((flowId) => {
+      const p = this.pos2.get(flowId);
+      if (!p) return null;
+      const [sx, sy] = this.w2s(p.x, p.y);
+      return { x: sx, y: sy };
+    });
 
     // Render on demand: full rate while something moves, a slow ambient tick
     // (for pulse drift and twinkle) otherwise — near-zero idle cost.

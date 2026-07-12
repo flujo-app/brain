@@ -18,7 +18,7 @@ export interface NodeRef {
 }
 
 export interface BrainActivityEvent {
-  kind: 'run-start' | 'node-enter' | 'node-exit' | 'subflow-start' | 'subflow-done' | 'tool-call' | 'run-done';
+  kind: 'run-start' | 'node-enter' | 'node-exit' | 'subflow-start' | 'subflow-done' | 'tool-call' | 'message' | 'run-done';
   conversationId: string;
   /** The behaviour (flow id) the event belongs to, resolved via the depth stack. */
   flowId: string | null;
@@ -27,6 +27,8 @@ export interface BrainActivityEvent {
   subflowId?: string;
   /** tool-call: the tool's name (typically "<server>_<tool>" or "-_-_-"-joined). */
   toolName?: string;
+  /** message: the assistant's chat output text. */
+  text?: string;
 }
 
 interface ConversationListItem {
@@ -47,7 +49,24 @@ interface RawEvent {
   subflowName?: string;
   name?: string;
   status?: string;
+  /** message: a FlujoChatMessage (OpenAI message + id/timestamp/processNodeId). */
+  message?: { id?: string; role?: string; content?: unknown; timestamp?: number };
 }
+
+/** Flatten OpenAI-style message content (string or text-part array) to plain text. */
+function textOf(content: unknown): string {
+  if (typeof content === 'string') return content.trim();
+  if (Array.isArray(content)) {
+    return content
+      .map((p) => (p && typeof p === 'object' && (p as { type?: string }).type === 'text' ? (p as { text?: string }).text ?? '' : ''))
+      .join('')
+      .trim();
+  }
+  return '';
+}
+
+/** Replayed messages older than this never become bubbles (mid-run attach / reload). */
+const MESSAGE_STALE_MS = 30_000;
 
 export class ExecutionWatcher {
   private subs = new Map<string, EventSource>();
@@ -55,6 +74,12 @@ export class ExecutionWatcher {
   private stacks = new Map<string, Array<string | null>>();
   /** Last seen event seq per conversation, for ?fromSeq resume without replay. */
   private seenSeq = new Map<string, number>();
+  /**
+   * Message ids already surfaced per conversation. FLUJO emits a live copy
+   * mid-loop AND the persisted copy at end-of-run under the same id — the
+   * stream itself does not dedupe, consumers must.
+   */
+  private seenMsgs = new Map<string, Set<string>>();
   private timer: ReturnType<typeof setInterval> | null = null;
   private inFlight = false;
 
@@ -128,6 +153,7 @@ export class ExecutionWatcher {
     this.subs.get(id)?.close();
     this.subs.delete(id);
     this.stacks.delete(id);
+    this.seenMsgs.delete(id);
   }
 
   private dispatch(id: string, ev: RawEvent): void {
@@ -173,11 +199,27 @@ export class ExecutionWatcher {
       case 'tool:call':
         this.onEvent({ kind: 'tool-call', conversationId: id, flowId: flowAt(depth), node: ev.node, toolName: ev.name });
         break;
+      case 'message': {
+        // Only the assistant's spoken output becomes a bubble — user turns,
+        // tool results and content-less tool-call messages stay invisible.
+        const m = ev.message;
+        if (m?.role !== 'assistant') break;
+        const text = textOf(m.content);
+        if (!text) break;
+        const mid = m.id ?? `${id}:${ev.seq}`;
+        let seen = this.seenMsgs.get(id);
+        if (!seen) this.seenMsgs.set(id, (seen = new Set()));
+        if (seen.has(mid)) break;
+        seen.add(mid);
+        if (typeof m.timestamp === 'number' && Date.now() - m.timestamp > MESSAGE_STALE_MS) break;
+        this.onEvent({ kind: 'message', conversationId: id, flowId: flowAt(depth), node: ev.node, text });
+        break;
+      }
       case 'run:done':
         this.onEvent({ kind: 'run-done', conversationId: id, flowId: flowAt(0) });
         break;
       default:
-        // model:delta, usage, message… — not visualized (yet).
+        // model:delta, usage… — not visualized (yet).
         break;
     }
   }
