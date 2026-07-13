@@ -210,4 +210,14 @@ npm run preview  # serve the production build
 
 Built with [Three.js](https://threejs.org/), TypeScript, and Vite. The viewer itself is a static site (deployable to GitHub Pages; `vite.config.ts` defaults to a relative base) — the manager is only needed for the lobby/brains features.
 
+### Releasing
+
+```bash
+npm run release              # patch bump: preflight, npm version, tag, push, watch CI
+npm run release minor        # or: major, or an exact 1.2.3
+npm run release -- --dry-run # preflight checks only
+```
+
+A release is just a `v*` tag: [`scripts/release.mjs`](../scripts/release.mjs) bumps `package.json`, commits, tags, and pushes; the [installer workflow](../.github/workflows/installer.yml) then builds `brain-setup.exe` on a Windows runner and attaches it to the GitHub release with generated notes. Nothing is published to npm.
+
 The test plan for the Docker path is in [test-plan.md](test-plan.md).

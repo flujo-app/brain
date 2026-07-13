@@ -33,3 +33,4 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: installer/Output/brain-setup.exe
+          generate_release_notes: true
