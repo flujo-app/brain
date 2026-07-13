@@ -14,6 +14,12 @@ while you watch every thought fire in real time.
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white)](tsconfig.json)
 [![License: MIT](https://img.shields.io/badge/license-MIT-8b5cf6)](#license)
 
+```bash
+git clone https://github.com/flujo-app/brain.git
+cd brain
+docker compose up
+```
+
 <img width="1904" height="936" alt="image" src="https://github.com/user-attachments/assets/8257a3c2-3d19-42e1-a106-f3c7d1e9a9ed" width="100%" />
 
 *A real FLUJO workspace, live: 25 behaviours, 177 connections, organised into provider galaxies.*
