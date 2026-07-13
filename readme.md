@@ -14,7 +14,7 @@ while you watch every thought fire in real time.
 [![TypeScript](https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white)](tsconfig.json)
 [![License: MIT](https://img.shields.io/badge/license-MIT-8b5cf6)](#license)
 
-<img width="1904" height="936" alt="image" src="https://github.com/user-attachments/assets/8257a3c2-3d19-42e1-a106-f3c7d1e9a9ed" />
+<img width="1904" height="936" alt="image" src="https://github.com/user-attachments/assets/8257a3c2-3d19-42e1-a106-f3c7d1e9a9ed" width="100%" />
 
 *A real FLUJO workspace, live: 25 behaviours, 177 connections, organised into provider galaxies.*
 
@@ -35,7 +35,7 @@ Agent workflows are graphs. Graphs are boring rectangles on a canvas — until y
 - 🔍 Click any neuron and the camera **flies inside it**, revealing its internal nodes, prompts, and tool belt
 
 <div align="center">
-<img src="docs/shot-focus.png" alt="Zoomed into a single behaviour: its internal nodes, tool belt, and behaviour calls laid out in 3D" width="100%" />
+<img width="1793" height="974" alt="image" src="https://github.com/user-attachments/assets/41a8bffd-6fc3-4682-9fab-633c09a024da" width="100%"/>
 
 *Inside a neuron: an orchestrator behaviour with its process nodes, three connected abilities, and the three behaviours it calls.*
 </div>
