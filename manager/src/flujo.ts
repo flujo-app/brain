@@ -92,6 +92,14 @@ export class FlujoClient {
     return this.req('/api/mcp/servers', { method: 'POST', body: JSON.stringify(config), timeoutMs: 60_000 });
   }
 
+  updateMcpServer(name: string, updates: Partial<McpServerConfig>): Promise<unknown> {
+    return this.req(`/api/mcp/servers/${encodeURIComponent(name)}`, {
+      method: 'PUT',
+      body: JSON.stringify(updates),
+      timeoutMs: 60_000,
+    });
+  }
+
   deleteMcpServer(name: string): Promise<unknown> {
     return this.req(`/api/mcp/servers/${encodeURIComponent(name)}`, { method: 'DELETE' });
   }
@@ -101,8 +109,17 @@ export class FlujoClient {
   }
 
   /** Tools of one MCP server (e.g. FLUJO's built-in "flujo" API server). */
-  listServerTools(name: string): Promise<{ tools?: Array<{ name?: string }>; error?: string }> {
+  listServerTools(name: string): Promise<{ tools?: Array<{ name?: string; description?: string }>; error?: string }> {
     return this.req(`/api/mcp/servers/${encodeURIComponent(name)}/tools`, { timeoutMs: 30_000 });
+  }
+
+  /** Call one tool on an installed MCP server directly (outside any flow). */
+  callTool(server: string, tool: string, args: Record<string, unknown>, timeoutMs = 120_000): Promise<unknown> {
+    return this.req(`/api/mcp/servers/${encodeURIComponent(server)}/tools/${encodeURIComponent(tool)}`, {
+      method: 'POST',
+      body: JSON.stringify({ args, timeout: timeoutMs }),
+      timeoutMs,
+    });
   }
 
   // ---- execution ----

@@ -5,11 +5,12 @@ import express, { type Request, type Response } from 'express';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { Registry, newBrainRecord } from './registry.js';
 import { generateBrainName } from './names.js';
-import { buildBrainstemServer } from './brainstem.js';
-import { FlujoClient } from './flujo.js';
-import { provisionBrain, deprovisionBrain } from './provision.js';
+import { BRAINSTEM_NAME, buildBrainstemServer } from './brainstem.js';
+import { FlujoClient, type FlujoFlow } from './flujo.js';
+import { provisionBrain, deprovisionBrain, rebuildBrain } from './provision.js';
 import { dockerAvailable, removeFlujoContainer } from './docker.js';
-import type { CreateBrainRequest } from './types.js';
+import { ensureDefaultFlujo } from './spawnFlujo.js';
+import type { CreateBrainRequest, ModelSpec } from './types.js';
 
 const PORT = Number(process.env.PORT ?? 8090);
 const FLUJO_DEFAULT_URL = process.env.FLUJO_DEFAULT_URL ?? 'http://localhost:4200';
@@ -99,6 +100,11 @@ const publicBrain = (b: ReturnType<Registry['list']>[number]) => {
   return rest;
 };
 
+const normUrl = (u: string) => u.replace(/\/+$/, '');
+
+/** The brain that already lives in a FLUJO instance, if any. */
+const brainAt = (url: string) => registry.list().find((b) => b.flujoUrl && normUrl(b.flujoUrl) === normUrl(url));
+
 api.get('/health', (_req, res) => res.json({ ok: true }));
 
 api.get('/brains', async (_req, res) => {
@@ -122,6 +128,12 @@ api.post('/brains', async (req, res) => {
   if (!body?.lifeGoal?.trim() || !body?.model) {
     return res.status(400).json({ error: 'lifeGoal and model are required' });
   }
+  // Without Docker only adopted brains are possible. Refuse up front instead
+  // of birthing a brain whose provisioning is doomed (the lobby's wizard
+  // forces adopt mode in this case; this guards any other client).
+  if (!body.adoptUrl && !(await dockerAvailable())) {
+    return res.status(400).json({ error: 'Docker is not available — this brain must adopt an existing FLUJO instance (set adoptUrl).' });
+  }
   // The name is just a handle — auto-generated unless the caller insists.
   const taken = new Set(registry.list().map((b) => b.name));
   const name = body.name?.trim() || generateBrainName(taken);
@@ -132,6 +144,14 @@ api.post('/brains', async (req, res) => {
   // to know its internal URL.
   const adoptsDefault = body.adoptUrl === 'default';
   if (adoptsDefault) body.adoptUrl = FLUJO_DEFAULT_URL;
+  // One FLUJO instance hosts at most one brain — a second adoption would just
+  // alias the first mind (shared brain-stem flow and tool belt).
+  if (body.adoptUrl) {
+    const owner = brainAt(body.adoptUrl);
+    if (owner) {
+      return res.status(409).json({ error: `that FLUJO already hosts the brain "${owner.name}" — open it from the lobby instead` });
+    }
+  }
   const brain = newBrainRecord(name, body.lifeGoal.trim());
   // Adopted instances: the editor link is the URL as the browser knows it.
   if (body.adoptUrl) {
@@ -139,6 +159,119 @@ api.post('/brains', async (req, res) => {
   }
   await registry.put(brain);
   void provisionBrain(registry, brain, body); // runs in background; lobby polls status
+  res.status(202).json(publicBrain(brain));
+});
+
+/**
+ * Connect a FLUJO instance elsewhere in the network. If it already carries a
+ * brain-stem (a brain grown elsewhere), it joins the lobby as-is — name and
+ * life goal are recovered from the stem flow and its tool belt is re-pointed
+ * at this manager. An empty instance is registered too; the viewer's grow
+ * card puts a brain-stem into it.
+ */
+api.post('/connect', async (req, res) => {
+  const raw = (req.body as { url?: string })?.url?.trim();
+  if (!raw || !/^https?:\/\//i.test(raw)) {
+    return res.status(400).json({ error: 'url must start with http:// or https://' });
+  }
+  const url = normUrl(raw);
+  const owner = brainAt(url);
+  if (owner) {
+    return res.status(409).json({ error: `already connected — that FLUJO hosts the brain "${owner.name}"` });
+  }
+
+  const flujo = new FlujoClient(url);
+  let flows: FlujoFlow[];
+  try {
+    flows = await flujo.listFlows();
+    if (!Array.isArray(flows)) throw new Error('unexpected answer');
+  } catch (err) {
+    return res.status(502).json({ error: `no FLUJO reachable at ${url}: ${(err as Error).message}` });
+  }
+
+  const stem = flows.find((f) => f.name === BRAINSTEM_NAME);
+  const taken = new Set(registry.list().map((b) => b.name));
+  const parsed = (stem?.description ?? '').match(/^Root of the "(.+?)" brain\. Life goal: (.*)$/s);
+  const name = parsed && !taken.has(parsed[1]) ? parsed[1] : generateBrainName(taken);
+  const brain = newBrainRecord(name, parsed?.[2] ?? '');
+  brain.kind = 'external';
+  brain.flujoUrl = url;
+  brain.editorUrl = url;
+  brain.status = 'ready';
+
+  if (stem) {
+    brain.brainstemFlowId = stem.id;
+    // Model shown on the card: whatever the stem's process node thinks with.
+    try {
+      const proc = stem.nodes?.find((n) => (n.data?.type ?? n.type) === 'process');
+      const boundModel = proc?.data?.properties?.boundModel as string | undefined;
+      const model = boundModel ? (await flujo.listModels()).find((m) => m.id === boundModel) : undefined;
+      if (model) {
+        brain.modelId = model.id;
+        brain.modelName = model.displayName ?? model.name;
+      }
+    } catch {
+      // Cosmetic only.
+    }
+    // Re-point the tool belt at THIS manager (heals brains whose original
+    // manager is gone). Best-effort: the flow keeps working without it.
+    const managerBase = process.env.MANAGER_INTERNAL_URL ?? `http://${req.get('host')}`;
+    await flujo
+      .updateMcpServer(BRAINSTEM_NAME, {
+        name: BRAINSTEM_NAME,
+        transport: 'streamable',
+        serverUrl: `${managerBase}/brains/${brain.id}/mcp/${brain.token}`,
+        disabled: false,
+      })
+      .catch(() => undefined);
+  }
+
+  await registry.put(brain);
+  res.status(201).json({ ...publicBrain(brain), hasStem: Boolean(stem) });
+});
+
+/**
+ * Grow a brain-stem into an already-registered (adopted) instance — used by
+ * the viewer's grow card when it looks at a brain through the per-brain proxy.
+ */
+api.post('/brains/:id/grow', async (req, res) => {
+  const brain = registry.get(req.params.id);
+  if (!brain) return res.status(404).json({ error: 'no such brain' });
+  if (brain.status === 'provisioning') return res.status(409).json({ error: 'already provisioning' });
+  const body = req.body as { lifeGoal?: string; model?: ModelSpec; heartbeat?: boolean; heartbeatCron?: string };
+  if (!body?.lifeGoal?.trim() || !body?.model) {
+    return res.status(400).json({ error: 'lifeGoal and model are required' });
+  }
+  brain.lifeGoal = body.lifeGoal.trim();
+  brain.status = 'provisioning';
+  brain.statusDetail = undefined;
+  await registry.put(brain);
+  void provisionBrain(registry, brain, {
+    lifeGoal: brain.lifeGoal,
+    model: body.model,
+    adoptUrl: brain.flujoUrl,
+    heartbeat: body.heartbeat,
+    heartbeatCron: body.heartbeatCron,
+  });
+  res.status(202).json(publicBrain(brain));
+});
+
+/**
+ * Recreate a managed brain's container from the current FLUJO_IMAGE, keeping
+ * its volumes — the in-place upgrade path when the image gained new powers
+ * (e.g. the baked-in browser).
+ */
+api.post('/brains/:id/rebuild', async (req, res) => {
+  const brain = registry.get(req.params.id);
+  if (!brain) return res.status(404).json({ error: 'no such brain' });
+  if (brain.kind !== 'managed' || !brain.containerId) {
+    return res.status(400).json({ error: 'only managed (Docker) brains can be rebuilt' });
+  }
+  if (brain.status === 'provisioning') return res.status(409).json({ error: 'already provisioning' });
+  brain.status = 'provisioning';
+  brain.statusDetail = 'rebuilding from the current image…';
+  await registry.put(brain);
+  void rebuildBrain(registry, brain);
   res.status(202).json(publicBrain(brain));
 });
 
@@ -325,4 +458,9 @@ app.listen(PORT, () => {
   console.log(`brain-manager listening on :${PORT}`);
   console.log(`  default FLUJO: ${FLUJO_DEFAULT_URL}`);
   console.log(`  ui dir: ${fs.existsSync(UI_DIR) ? UI_DIR : '(none — API/proxy only)'}`);
+  // Standalone launcher only (FLUJO_AUTOSTART=1): if nothing answers on the
+  // default URL and it is local, spawn a FLUJO from the npm package so a bare
+  // machine still gets a working single-brain setup. Fire-and-forget — the
+  // front door keeps answering (lobby) until the instance is up.
+  if (process.env.FLUJO_AUTOSTART === '1') void ensureDefaultFlujo(FLUJO_DEFAULT_URL);
 });

@@ -161,6 +161,50 @@ function intersect(a: string[], b: string[]): string[] {
   return a.filter((x) => bs.has(x));
 }
 
+/** Stable neuron id for an MCP server, distinct from any flow id. */
+export function abilityId(server: string): string {
+  return `ability:${server}`;
+}
+
+/**
+ * Match a live tool-call name to the ability (MCP server) it belongs to.
+ * FLUJO tool names are typically "<server>_<tool>" or "-_-"-joined; the
+ * longest server-name prefix followed by a separator wins.
+ */
+export function abilityForTool(graph: BrainGraph, toolName?: string): Neuron | null {
+  if (!toolName) return null;
+  const t = toolName.toLowerCase();
+  let best: Neuron | null = null;
+  for (const n of graph.neurons) {
+    if (n.kind !== 'ability') continue;
+    const s = n.name.toLowerCase();
+    const next = t[s.length];
+    if (t.startsWith(s) && (next === undefined || !/[a-z0-9]/.test(next))) {
+      if (!best || s.length > best.name.length) best = n;
+    }
+  }
+  return best;
+}
+
+/** An MCP server as a small neuron of its own. */
+function toAbility(server: string): Neuron {
+  return {
+    id: abilityId(server),
+    kind: 'ability',
+    name: server,
+    description: '',
+    folder: '',
+    counts: { start: 0, process: 0, finish: 0, mcp: 0, subflow: 0 },
+    nodeTotal: 0,
+    providers: [],
+    modelNames: [],
+    servers: [server],
+    subflowRefs: [],
+    broken: false,
+    inner: { nodes: [], edges: [] },
+  };
+}
+
 /** Turn raw flows into behaviours + the synapses that wire them together. */
 export function distill(
   flows: RawFlow[],
@@ -187,23 +231,31 @@ export function distill(
     }
   }
 
-  // 2 & 3. Shared abilities and shared models — undirected synaptic ties.
+  // 2. Abilities — every MCP server (configured in FLUJO or bound by a flow)
+  // becomes its own small neuron, tied to each behaviour that uses it. Shared
+  // tooling still reads at a glance: sharing behaviours meet at the same hub.
+  const serverNames = new Set<string>(Object.keys(servers));
+  for (const n of neurons) for (const s of n.servers) serverNames.add(s);
+  const abilities = [...serverNames].sort().map(toAbility);
+  for (const n of neurons) {
+    for (const s of n.servers) {
+      synapses.push({
+        source: n.id,
+        target: abilityId(s),
+        kind: 'server',
+        weight: 1,
+        directed: false,
+        detail: `uses ability "${s}"`,
+      });
+    }
+  }
+  neurons.push(...abilities);
+
+  // 3. Shared models — undirected synaptic ties (abilities have none).
   for (let i = 0; i < neurons.length; i++) {
     for (let j = i + 1; j < neurons.length; j++) {
       const a = neurons[i];
       const b = neurons[j];
-
-      const sharedServers = intersect(a.servers, b.servers);
-      if (sharedServers.length) {
-        synapses.push({
-          source: a.id,
-          target: b.id,
-          kind: 'server',
-          weight: sharedServers.length,
-          directed: false,
-          detail: `share abilit${sharedServers.length > 1 ? 'ies' : 'y'}: ${sharedServers.join(', ')}`,
-        });
-      }
 
       const sharedModels = intersect(a.modelNames, b.modelNames);
       if (sharedModels.length) {

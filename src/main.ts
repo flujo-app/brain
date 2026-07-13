@@ -4,9 +4,10 @@ import { ExecutionWatcher, type BrainActivityEvent } from './data/execution';
 import { HeartbeatWatcher, setHeartbeatTempo } from './data/heartbeat';
 import { Brain } from './scene/brain';
 import { Brain2D } from './scene2d/brain2d';
+import { HistoryView } from './scene/history';
 import { Hud, type ViewMode } from './ui/hud';
 import { AiDock } from './ui/aichat';
-import type { BrainGraph } from './types';
+import type { BrainGraph, NodeChatMessage } from './types';
 
 const VIEW_KEY = 'brain-view';
 
@@ -69,7 +70,7 @@ function webglAvailable(): boolean {
 /** Saved choice wins; otherwise weak/GL-less hardware starts in the 2D view. */
 function initialMode(): ViewMode {
   const saved = localStorage.getItem(VIEW_KEY);
-  if (saved === '2d' || saved === '3d') return saved;
+  if (saved === '2d' || saved === '3d' || saved === 'history') return saved;
   if (!webglAvailable()) return '2d';
   if ((navigator.hardwareConcurrency ?? 8) <= 4) return '2d';
   return '3d';
@@ -91,9 +92,11 @@ async function boot() {
   const hud = new Hud();
   const aiDock = new AiDock();
   let mode = initialMode();
-  let brain: Brain | Brain2D | null = null;
+  let brain: Brain | Brain2D | HistoryView | null = null;
   let graph: BrainGraph | null = null;
   let hash: string | null = null;
+  /** The chat dock's current conversation, pinned to flow nodes. */
+  let convo: NodeChatMessage[] = [];
 
   hud.setViewMode(mode);
 
@@ -101,8 +104,20 @@ async function boot() {
     if (!graph) return;
     brain?.dispose();
     const canvas = freshCanvas();
-    brain = mode === '2d' ? new Brain2D(canvas, graph, hud) : new Brain(canvas, graph, hud);
+    brain =
+      mode === '2d' ? new Brain2D(canvas, graph, hud)
+      : mode === 'history' ? new HistoryView(canvas, graph, hud)
+      : new Brain(canvas, graph, hud);
+    brain.setConversation(convo);
   };
+
+  // The dock's conversation overlays the focused flow graph (💬 badges).
+  aiDock.onConversation = (msgs) => {
+    convo = msgs;
+    brain?.setConversation(msgs);
+  };
+  // The heartbeat bar's 💬 opens the beat's stored conversation in the dock.
+  hud.onOpenHeartbeat = (conversationId) => aiDock.openConversation(conversationId);
 
   // The view toggle swaps whole renderers: real WebGL vs. real Canvas 2D.
   // (Renderers wire the rest of the HUD themselves; this callback is ours.)

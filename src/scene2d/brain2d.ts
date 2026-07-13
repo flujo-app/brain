@@ -1,8 +1,9 @@
-import type { BrainGraph, Neuron, Synapse, SynapseKind } from '../types';
+import type { BrainGraph, Neuron, NodeChatMessage, Synapse, SynapseKind } from '../types';
 import { BACKGROUND, SYNAPSE_COLORS, nodeTypeLabel } from '../theme';
-import { groupNeurons, type GroupMode, type Grouping } from '../grouping';
+import { ABILITY_GROUP, groupNeurons, type GroupMode, type Grouping } from '../grouping';
 import { computeSectionedLayout } from '../layout/sectionedLayout';
-import { neuronRadius } from '../scene/stars';
+import { abilityForTool } from '../data/distill';
+import { abilityTint, neuronRadius } from '../scene/stars';
 import type { Hud, RelationLine } from '../ui/hud';
 import { ChatBubbleLayer } from '../ui/bubbles';
 import type { BrainActivityEvent } from '../data/execution';
@@ -45,8 +46,6 @@ interface Edge2 {
   cx: number; cy: number; // quadratic control point
   fade: number; // long edges thin out
   color: string;
-  speed: number;
-  phase: number;
 }
 
 interface CamGoal { x: number; y: number; s: number }
@@ -90,10 +89,14 @@ export class Brain2D {
   private glow = new Map<string, number>();
   private convFlows = new Map<string, Set<string>>();
   private edgeBoost: number[] = [];
+  /** Flash travel direction per edge: 1 = along the synapse, -1 = reversed. */
+  private edgeBoostDir: number[] = [];
   private followExec = true;
   private hudActivity: { flowId: string | null; detail?: string } | null = null;
   /** Chat output floating above the behaviour that produced it. */
   private bubbles = new ChatBubbleLayer();
+  /** The chat dock's conversation, grouped by the node that spoke. */
+  private convByNode = new Map<string, NodeChatMessage[]>();
 
   // Eased visual state.
   private focusEase = 0; // 0 = overview, 1 = flow graph fully in
@@ -130,7 +133,7 @@ export class Brain2D {
     window.addEventListener('resize', this.onResize);
     window.addEventListener('keydown', this.onKeyDown);
 
-    this.hud.setStats(graph.neurons.length, graph.synapses.length, this.grouping.groups.length);
+    this.hud.setStats(graph, this.grouping.groups.length);
     this.followExec = hud.followEnabled();
 
     // Deep link: ?focus=<behaviour name or id> jumps straight into it.
@@ -164,7 +167,14 @@ export class Brain2D {
 
     this.stars = this.graph.neurons.map((neuron, ci) => {
       const p = this.pos2.get(neuron.id) ?? { x: 0, y: 0 };
-      const color = colorOf.get(neuron.id) ?? '#9aa6c8';
+      let color = colorOf.get(neuron.id) ?? '#9aa6c8';
+      let dimmed = neuron.broken;
+      if (neuron.kind === 'ability') {
+        const status = this.graph.servers[neuron.name];
+        const tint = abilityTint(status);
+        if (tint !== null) color = hexOf(tint);
+        if (status === 'disabled') dimmed = true;
+      }
       const radius = neuronRadius(neuron);
       const spread = radius * 1.7 + 1.2;
       const sats = neuron.inner.nodes.map((node, k) => {
@@ -182,14 +192,14 @@ export class Brain2D {
         y: p.y,
         r: radius,
         color,
-        base: neuron.broken ? 0.4 : 0.95,
+        base: dimmed ? 0.4 : 0.95,
         phase: (ci * 12.9898) % 6.28,
         sats,
       };
     });
 
     this.edges = [];
-    this.graph.synapses.forEach((s, i) => {
+    this.graph.synapses.forEach((s) => {
       const a = this.pos2.get(s.source);
       const b = this.pos2.get(s.target);
       if (!a || !b) return;
@@ -211,11 +221,10 @@ export class Brain2D {
         cx: mx + (ox / ol) * bow, cy: my + (oy / ol) * bow,
         fade: Math.min(0.85, Math.max(0, (len - 8) / 50)),
         color: hexOf(SYNAPSE_COLORS[s.kind]),
-        speed: 0.12 + ((i * 2654435761) % 1000) / 1000 * 0.35 + (s.kind === 'subflow' ? 0.2 : 0),
-        phase: ((i * 40503) % 1000) / 1000,
       });
     });
     this.edgeBoost = new Array(this.edges.length).fill(0);
+    this.edgeBoostDir = new Array(this.edges.length).fill(1);
 
     this.groupGeo = this.grouping.groups.map((g, gi) => {
       const c = layout.centers.get(g.id)!;
@@ -245,7 +254,7 @@ export class Brain2D {
     this.flowGraph = null;
     this.hud.hidePanel();
     this.build();
-    this.hud.setStats(graph.neurons.length, graph.synapses.length, this.grouping.groups.length);
+    this.hud.setStats(graph, this.grouping.groups.length);
     if (hadFocus && graph.neurons.some((n) => n.id === hadFocus)) this.setFocus(hadFocus);
   }
 
@@ -312,7 +321,7 @@ export class Brain2D {
       if (mode === this.groupMode) return;
       this.groupMode = mode;
       this.resetToOverview();
-      this.hud.setStats(this.graph.neurons.length, this.graph.synapses.length, this.grouping.groups.length);
+      this.hud.setStats(this.graph, this.grouping.groups.length);
     };
     this.hud.onFollow = (on) => {
       this.followExec = on;
@@ -474,15 +483,22 @@ export class Brain2D {
 
     const neuron = this.graph.neurons.find((n) => n.id === id)!;
     const home = this.pos2.get(id) ?? { x: 0, y: 0 };
-    this.flowGraph = new FlowGraph2D(neuron, this.graph.servers, home.x, home.y);
+    if (neuron.kind === 'ability') {
+      // Abilities have no inner graph — spotlight the star where it lives.
+      this.flowGraph = null;
+      this.camGoal = { x: home.x, y: home.y, s: Math.min(60, Math.max(this.cam.s, this.overviewScale * 3)) };
+    } else {
+      this.flowGraph = new FlowGraph2D(neuron, this.graph.servers, home.x, home.y);
+      this.flowGraph.setBadges(this.msgCounts());
 
-    // Fly in so the graph fills most of the viewport.
-    const s = Math.min(
-      160,
-      (this.w * 0.7) / (this.flowGraph.halfWidth * 2),
-      (this.h * 0.62) / (this.flowGraph.halfHeight * 2),
-    );
-    this.camGoal = { x: home.x, y: home.y + this.flowGraph.halfHeight * 0.12, s };
+      // Fly in so the graph fills most of the viewport.
+      const s = Math.min(
+        160,
+        (this.w * 0.7) / (this.flowGraph.halfWidth * 2),
+        (this.h * 0.62) / (this.flowGraph.halfHeight * 2),
+      );
+      this.camGoal = { x: home.x, y: home.y + this.flowGraph.halfHeight * 0.12, s };
+    }
 
     this.hud.showPanel(neuron, this.relationsOf(id), this.graph.servers);
     this.dirty = true;
@@ -502,7 +518,27 @@ export class Brain2D {
     const node = neuron.inner.nodes.find((n) => n.id === nodeId);
     if (!node) return;
     const target = node.subflowId ? this.graph.neurons.find((n) => n.id === node.subflowId) ?? null : null;
-    this.hud.showNodePanel(neuron, node, this.graph.servers, target);
+    this.hud.showNodePanel(neuron, node, this.graph.servers, target, this.convByNode.get(nodeId) ?? []);
+  }
+
+  /** The chat dock's conversation changed — refresh the per-node overlay. */
+  setConversation(msgs: NodeChatMessage[]): void {
+    this.convByNode.clear();
+    for (const m of msgs) {
+      if (!this.convByNode.has(m.nodeId)) this.convByNode.set(m.nodeId, []);
+      this.convByNode.get(m.nodeId)!.push(m);
+    }
+    if (this.flowGraph) {
+      this.flowGraph.setBadges(this.msgCounts());
+      this.needsDraw = true;
+      if (this.selectedNodeId) this.selectNode(this.selectedNodeId);
+    }
+  }
+
+  private msgCounts(): Map<string, number> {
+    const counts = new Map<string, number>();
+    for (const [id, msgs] of this.convByNode) counts.set(id, msgs.length);
+    return counts;
   }
 
   private clearFocus(): void {
@@ -560,7 +596,11 @@ export class Brain2D {
     }
     if (id) {
       const n = this.graph.neurons.find((nn) => nn.id === id)!;
-      this.hud.showTooltip(`${n.name} · ${n.nodeTotal} nodes`, x, y);
+      this.hud.showTooltip(
+        n.kind === 'ability' ? `${n.name} · ability · ${this.graph.servers[n.name] ?? 'unknown'}` : `${n.name} · ${n.nodeTotal} nodes`,
+        x,
+        y,
+      );
     } else {
       this.hud.hideTooltip();
     }
@@ -594,10 +634,16 @@ export class Brain2D {
         break;
       case 'node-exit':
         break; // keep the highlight until the next node lights up
-      case 'tool-call':
+      case 'tool-call': {
         this.touchFlow(e.conversationId, e.flowId);
+        const ability = abilityForTool(this.graph, e.toolName);
+        if (ability) {
+          this.glow.set(ability.id, 1);
+          if (e.flowId) this.flash(e.flowId, ability.id);
+        }
         this.hudActivity = { flowId: e.flowId, detail: e.toolName ? `tool ${e.toolName}` : undefined };
         break;
+      }
       case 'message':
         this.touchFlow(e.conversationId, e.flowId);
         if (e.text) {
@@ -642,12 +688,17 @@ export class Brain2D {
     });
   }
 
-  /** Flash the subflow axon source -> target (a live behaviour call). */
+  /** Flash the synapse source -> target (a live behaviour call or tool use). */
   private flash(sourceId: string, targetId: string): void {
     const i = this.edges.findIndex(
-      (e) => e.synapse.kind === 'subflow' && e.synapse.source === sourceId && e.synapse.target === targetId,
+      (e) =>
+        (e.synapse.source === sourceId && e.synapse.target === targetId) ||
+        (!e.synapse.directed && e.synapse.source === targetId && e.synapse.target === sourceId),
     );
-    if (i >= 0) this.edgeBoost[i] = 1;
+    if (i < 0) return;
+    this.edgeBoost[i] = 1;
+    // The pulse travels from the acting end toward the other.
+    this.edgeBoostDir[i] = this.edges[i].synapse.source === sourceId ? 1 : -1;
   }
 
   private updateGlow(dt: number, t: number): void {
@@ -679,7 +730,8 @@ export class Brain2D {
 
   /** Mirror of the 3D spotlight rules, cached into flat alpha arrays. */
   private applySpotlight(): void {
-    const focusOpen = this.focusId !== null;
+    // A focused ability has no flow graph — treat it like a bright hover.
+    const focusOpen = this.focusId !== null && this.flowGraph !== null;
     const focus = this.focusId ?? this.hoveredId;
     let visible: Set<string> | null = null;
     let active: Set<number> | null = null;
@@ -733,8 +785,8 @@ export class Brain2D {
       }
     }
 
-    // Eased dims.
-    const focusTarget = this.focusId ? 1 : 0;
+    // Eased dims. (A focused ability keeps the overview readable — no fade.)
+    const focusTarget = this.focusId && this.flowGraph ? 1 : 0;
     if (Math.abs(this.focusEase - focusTarget) > 0.002) {
       this.focusEase += (focusTarget - this.focusEase) * Math.min(1, dt * 6);
       this.needsDraw = true;
@@ -742,7 +794,7 @@ export class Brain2D {
       this.focusEase = focusTarget;
       this.needsDraw = true;
     }
-    const nebulaTarget = this.focusId ? 0.12 : 1;
+    const nebulaTarget = this.focusId && this.flowGraph ? 0.12 : 1;
     this.nebulaDim += (nebulaTarget - this.nebulaDim) * Math.min(1, dt * 6);
 
     this.updateGlow(dt, t);
@@ -841,20 +893,22 @@ export class Brain2D {
       ctx.stroke();
     }
 
-    // Travelling signal pulses along each visible synapse.
+    // Signal pulses exist only while an interaction flashes an edge (subflow
+    // handoff, tool call): they launch from the acting end, ease toward the
+    // other, and vanish with the flash — no ambient traffic.
     const pulseSize = Math.min(16, Math.max(5, 1.7 * cam.s));
     for (let i = 0; i < this.edges.length; i++) {
-      const m = this.edgeM[i] + this.edgeBoost[i] * 1.2;
-      if (m <= 0.03) continue;
+      const boost = this.edgeBoost[i];
+      if (boost <= 0.01) continue;
       const e = this.edges[i];
-      let f = (t * e.speed + e.phase) % 1;
-      if (!e.synapse.directed) f = f < 0.5 ? f * 2 : (1 - f) * 2;
+      const along = 1 - boost;
+      const f = this.edgeBoostDir[i] >= 0 ? along : 1 - along;
       const u = 1 - f;
       const px = u * u * e.ax + 2 * u * f * e.cx + f * f * e.bx;
       const py = u * u * e.ay + 2 * u * f * e.cy + f * f * e.by;
       if (!onScreen(px, py)) continue;
       const [sx, sy] = this.w2s(px, py);
-      ctx.globalAlpha = Math.min(1, m * 1.1);
+      ctx.globalAlpha = Math.min(1, boost * 1.4);
       ctx.drawImage(glowSprite(e.color), sx - pulseSize / 2, sy - pulseSize / 2, pulseSize, pulseSize);
     }
 
@@ -878,7 +932,7 @@ export class Brain2D {
     // Neuron cores: glow sprites with twinkle + execution wake boost.
     for (let i = 0; i < this.stars.length; i++) {
       const st = this.stars[i];
-      const boost = this.focusId === st.neuron.id ? 0 : this.glow.get(st.neuron.id) ?? 0;
+      const boost = this.focusId === st.neuron.id && this.flowGraph ? 0 : this.glow.get(st.neuron.id) ?? 0;
       const alpha = (this.starAlpha[i] + boost * 0.9) * (0.82 + 0.18 * Math.sin(t * 1.3 + st.phase));
       if (alpha <= 0.015) continue;
       if (!onScreen(st.x, st.y, st.r * 3)) continue;
@@ -939,7 +993,8 @@ export class Brain2D {
         ctx.fillText(g.label, sx, sy - 14);
         ctx.font = '400 10px Inter, "Segoe UI", system-ui, sans-serif';
         ctx.fillStyle = '#8a97bf';
-        ctx.fillText(`${g.count} behaviour${g.count === 1 ? '' : 's'}`, sx, sy);
+        const noun = g.id === ABILITY_GROUP ? (g.count === 1 ? 'ability' : 'abilities') : (g.count === 1 ? 'behaviour' : 'behaviours');
+        ctx.fillText(`${g.count} ${noun}`, sx, sy);
         ctx.shadowBlur = 0;
       }
     }

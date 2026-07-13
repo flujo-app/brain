@@ -2,26 +2,24 @@ import { flujoBase } from './loader';
 
 /**
  * Watches the brain's heartbeat: FLUJO's planned executions drive the
- * autonomous wake-ups, and every fire (with saveConversations on) leaves a
- * conversation behind. This poller finds the most recent heartbeat run and
- * loads its transcript, so the HUD can show what the brain thought on its
- * last beat while nothing is focused.
+ * autonomous wake-ups. This poller finds the freshest beat and reports a
+ * compact status (name, running/completed, when, tempo) — the transcript
+ * itself lives in FLUJO as a stored conversation and opens in the chat dock.
+ *
+ * Resilience rule: a transient fetch failure never blanks the HUD — only a
+ * successful poll that finds no heartbeat does.
  */
-
-export interface HeartbeatMessage {
-  role: string;
-  text: string;
-}
 
 export interface HeartbeatInfo {
   /** The planned execution's name (e.g. "misty-fjord heartbeat"). */
   name: string;
   flowId: string | null;
-  /** Conversation status: running / completed / error / … */
+  /** Last run status: running / completed / error / skipped. */
   status: string;
   /** When the beat fired (ISO timestamp). */
   firedAt: string;
-  messages: HeartbeatMessage[];
+  /** The stored conversation of the last beat (openable in the chat dock). */
+  conversationId: string | null;
   /** The planned execution behind the beat — target for the tempo slider. */
   executionId: string | null;
   /** Current schedule cron; null when the trigger is not schedule-based. */
@@ -30,29 +28,8 @@ export interface HeartbeatInfo {
 
 interface PlannedListEntry {
   execution?: { id?: string; name?: string; flowId?: string; trigger?: { type?: string; cron?: string } };
-  lastRun?: { conversationId?: string; firedAt?: string };
+  lastRun?: { conversationId?: string; firedAt?: string; finishedAt?: string; status?: string };
 }
-
-interface ConversationState {
-  status?: string;
-  updatedAt?: number;
-  flowId?: string | null;
-  messages?: Array<{ role?: string; content?: unknown }>;
-}
-
-/** Flatten OpenAI-style message content (string or text-part array) to plain text. */
-function textOf(content: unknown): string {
-  if (typeof content === 'string') return content.trim();
-  if (Array.isArray(content)) {
-    return content
-      .map((p) => (p && typeof p === 'object' && (p as { type?: string }).type === 'text' ? (p as { text?: string }).text ?? '' : ''))
-      .join('')
-      .trim();
-  }
-  return '';
-}
-
-const MAX_MESSAGES = 8;
 
 export class HeartbeatWatcher {
   private timer: ReturnType<typeof setInterval> | null = null;
@@ -83,38 +60,29 @@ export class HeartbeatWatcher {
     this.inFlight = true;
     try {
       const res = await fetch(`${base}/api/planned-executions`);
-      if (!res.ok) return this.push(null);
-      const { executions } = (await res.json()) as { executions?: PlannedListEntry[] };
+      if (!res.ok) return; // transient — keep whatever is shown
+      const { executions, paused } = (await res.json()) as { executions?: PlannedListEntry[]; paused?: boolean };
+      if (!Array.isArray(executions)) return;
 
-      // The heartbeat: a scheduled execution with a saved conversation. Prefer
-      // ones actually named like a heartbeat, then schedule-triggered ones,
-      // then any autonomous wake-up (poll/watch triggers) — freshest fire wins.
-      const fired = (executions ?? []).filter((e) => e.lastRun?.conversationId);
+      // A paused brain has no heartbeat to show — the scheduler is frozen.
+      if (paused) return this.push(null);
+
+      // The heartbeat: prefer executions named like one, then schedule-driven
+      // ones, then any that ever fired — freshest fire wins.
+      const fired = executions.filter((e) => e.lastRun?.firedAt);
       const named = fired.filter((e) => /heartbeat/i.test(e.execution?.name ?? ''));
       const scheduled = fired.filter((e) => e.execution?.trigger?.type === 'schedule');
       const pool = named.length ? named : scheduled.length ? scheduled : fired;
       const beat = pool.sort((a, b) => (b.lastRun?.firedAt ?? '').localeCompare(a.lastRun?.firedAt ?? ''))[0];
-      if (!beat) return this.push(null);
+      if (!beat) return this.push(null); // a real answer: no heartbeat exists
 
-      const convId = beat.lastRun!.conversationId!;
-      const convRes = await fetch(`${base}/v1/chat/conversations/${encodeURIComponent(convId)}`);
-      if (!convRes.ok) return this.push(null);
-      const conv = (await convRes.json()) as ConversationState;
-
-      const messages = (conv.messages ?? [])
-        .flatMap((m) => {
-          if (m.role !== 'user' && m.role !== 'assistant') return [];
-          const text = textOf(m.content);
-          return text ? [{ role: m.role, text }] : [];
-        })
-        .slice(-MAX_MESSAGES);
-
+      const run = beat.lastRun!;
       this.push({
         name: beat.execution?.name ?? 'heartbeat',
-        flowId: conv.flowId ?? beat.execution?.flowId ?? null,
-        status: conv.status ?? 'completed',
-        firedAt: beat.lastRun!.firedAt ?? '',
-        messages,
+        flowId: beat.execution?.flowId ?? null,
+        status: run.status ?? (run.finishedAt ? 'completed' : 'running'),
+        firedAt: run.firedAt ?? '',
+        conversationId: run.conversationId ?? null,
         executionId: beat.execution?.id ?? null,
         cron: beat.execution?.trigger?.type === 'schedule' ? beat.execution.trigger.cron ?? null : null,
       });
@@ -126,9 +94,7 @@ export class HeartbeatWatcher {
   }
 
   private push(h: HeartbeatInfo | null): void {
-    const sig = h
-      ? `${h.firedAt}|${h.status}|${h.cron}|${h.messages.length}|${h.messages[h.messages.length - 1]?.text ?? ''}`
-      : 'null';
+    const sig = h ? `${h.firedAt}|${h.status}|${h.cron}|${h.conversationId}` : 'null';
     if (sig === this.lastSig) return;
     this.lastSig = sig;
     this.onUpdate(h);

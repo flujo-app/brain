@@ -1,0 +1,37 @@
+# Builds and publishes the browser-capable FLUJO image (docker/flujo-browser:
+# the published FLUJO image + headless Chromium + Playwright MCP) so installs
+# can `docker compose pull flujo` instead of building it locally. Runs on
+# version tags, when the Dockerfile changes, weekly (to pick up new FLUJO
+# bases and Chromium security updates), and on demand.
+name: Publish flujo-browser image
+
+on:
+  push:
+    tags: ['v*']
+    branches: [main]
+    paths: ['docker/flujo-browser/**']
+  schedule:
+    - cron: '0 4 * * 1'
+  workflow_dispatch:
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: docker/flujo-browser
+          push: true
+          pull: true
+          tags: ghcr.io/${{ github.repository_owner }}/flujo-browser:latest

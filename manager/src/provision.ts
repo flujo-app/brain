@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import { FlujoClient, type FlujoModel } from './flujo.js';
-import { createFlujoContainer } from './docker.js';
+import { createFlujoContainer, flujoImageAvailable, removeFlujoContainer } from './docker.js';
 import { BRAINSTEM_NAME, brainstemFlow, WAKE_PROMPT } from './brainstem.js';
 import type { Registry } from './registry.js';
 import type { BrainRecord, CreateBrainRequest, ModelSpec } from './types.js';
@@ -50,7 +50,7 @@ async function setupOllamaModel(flujo: FlujoClient, spec: Extract<ModelSpec, { m
     // A bare 'fetch failed' helps nobody — say who was unreachable.
     throw new Error(
       `Ollama at ${base} is unreachable (${(err as Error).cause instanceof Error ? (err as Error & { cause: Error }).cause.message : (err as Error).message}) — ` +
-        `is the ollama service running? (docker compose up -d starts the whole stack)`,
+        `is Ollama running? (Docker stack: docker compose up -d · standalone: install and start Ollama from ollama.com)`,
     );
   }
   if (!res.ok || !res.body) throw new Error(`ollama pull ${spec.tag} failed: ${res.status} ${await res.text()}`);
@@ -79,6 +79,25 @@ async function setupByokModel(flujo: FlujoClient, spec: Extract<ModelSpec, { mod
     provider: spec.provider,
     baseUrl,
     ApiKey: spec.apiKey,
+  });
+}
+
+/** Register the baked-in headless Chromium as the "browser" skill (idempotent). */
+async function ensureBrowserSkill(flujo: FlujoClient): Promise<void> {
+  const servers = await flujo.listMcpServers();
+  if (servers.some((s) => s.name === 'browser')) return;
+  await flujo.createMcpServer({
+    name: 'browser',
+    transport: 'stdio',
+    command: 'playwright-mcp',
+    // --isolated: fresh profile per session, so parallel behaviours never
+    // fight over a profile lock. System Chromium, no sandbox (the container
+    // is the sandbox), headless.
+    args: ['--headless', '--no-sandbox', '--isolated', '--executable-path', '/usr/bin/chromium'],
+    disabled: false,
+    autoApprove: [],
+    env: {},
+    rootPath: '',
   });
 }
 
@@ -148,6 +167,20 @@ export async function provisionBrain(registry: Registry, brain: BrainRecord, req
       });
     }
 
+    // 3b. The browser skill — managed brains run the flujo-browser image
+    //     (headless Chromium + Playwright MCP baked in), so offer it as a
+    //     ready skill. Adopted instances are left alone: their host may lack
+    //     a browser, and the brain can still learn one that fits.
+    if (!req.adoptUrl) {
+      await step('installing the browser skill…');
+      try {
+        await ensureBrowserSkill(flujo);
+      } catch (err) {
+        // Not fatal — the image may be a plain FLUJO without Chromium.
+        brain.statusDetail = `browser skill skipped: ${(err as Error).message}`;
+      }
+    }
+
     // 4. The brain-stem flow (life goal + model + tools). Newer FLUJOs expose
     //    their whole API as the built-in "flujo" MCP server (also proxied at
     //    /mcp-proxy/flujo) — bind all of its tools so the brain-stem can drive
@@ -200,6 +233,74 @@ export async function provisionBrain(registry: Registry, brain: BrainRecord, req
   } catch (err) {
     brain.status = 'error';
     brain.statusDetail = (err as Error).message;
+    await registry.put(brain);
+  }
+}
+
+/**
+ * Recreate a managed brain's container from the CURRENT image, keeping its
+ * named volumes (db + mcp-servers) — flows, models, memories and the belt
+ * registration all survive; only the image changes. Runs in the background
+ * like provisioning; the lobby polls the status.
+ */
+export async function rebuildBrain(registry: Registry, brain: BrainRecord): Promise<void> {
+  const step = async (detail: string) => {
+    brain.statusDetail = detail;
+    await registry.put(brain);
+  };
+
+  try {
+    if (brain.kind !== 'managed' || !brain.containerId) {
+      throw new Error('only managed (Docker) brains can be rebuilt');
+    }
+    // Never strand a brain: make sure the target image exists BEFORE the old
+    // container is torn down.
+    if (!(await flujoImageAvailable())) {
+      throw new Error('the FLUJO image is not available locally — run `docker compose build flujo` (or pull it) first');
+    }
+
+    await step('removing the old container (memories are kept)…');
+    await removeFlujoContainer(brain.containerId, brain.id, false);
+
+    await step('creating the new container…');
+    const used = new Set(
+      registry
+        .list()
+        .filter((b) => b.id !== brain.id)
+        .map((b) => b.editorPort)
+        .filter(Boolean),
+    );
+    // Prefer the brain's old editor port so bookmarks keep working.
+    const candidates: number[] = brain.editorPort ? [brain.editorPort] : [];
+    for (let p = 4201; p <= 4299 && candidates.length < 20; p++) {
+      if (!used.has(p) && !candidates.includes(p)) candidates.push(p);
+    }
+    const c = await createFlujoContainer(brain.id, candidates);
+    brain.containerId = c.containerId;
+    brain.flujoUrl = c.flujoUrl;
+    brain.editorPort = c.editorPort;
+    brain.editorUrl = `http://127.0.0.1:${c.editorPort}`;
+    await registry.put(brain);
+
+    await step('waiting for FLUJO to wake…');
+    const flujo = new FlujoClient(brain.flujoUrl);
+    await waitForFlujo(flujo, 240_000);
+
+    // The volumes carried everything user-made; only image-level extras can
+    // be new. Today that is the browser skill.
+    await step('installing the browser skill…');
+    try {
+      await ensureBrowserSkill(flujo);
+    } catch (err) {
+      brain.statusDetail = `browser skill skipped: ${(err as Error).message}`;
+    }
+
+    brain.status = 'ready';
+    brain.statusDetail = undefined;
+    await registry.put(brain);
+  } catch (err) {
+    brain.status = 'error';
+    brain.statusDetail = `rebuild failed: ${(err as Error).message}`;
     await registry.put(brain);
   }
 }

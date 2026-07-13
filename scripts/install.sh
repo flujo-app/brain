@@ -340,14 +340,15 @@ fi
 # ---------------------------------------------------------------------------
 cd "$INSTALL_DIR"
 if [ "$MODE" = docker ]; then
-  # Pull the prebuilt FLUJO and Ollama images so `docker compose up` does not
-  # have to build FLUJO from source (a long build). Best effort: if the pull
-  # fails, compose falls back to building from GitHub.
-  step "Pulling prebuilt images (FLUJO, Ollama) - saves a long local build"
-  compose pull flujo ollama || warn "Could not pull the prebuilt images; 'docker compose up' will build FLUJO from source instead (slower first start)."
+  # Pull the prebuilt images. The FLUJO base feeds the local flujo-browser
+  # build (FLUJO + headless Chromium for the "browser" skill). Best effort:
+  # anything missing is built or pulled on first `docker compose up`.
+  step "Pulling prebuilt images (FLUJO, Ollama)"
+  $DOCKER_SUDO docker pull ghcr.io/mario-andreschak/flujo:latest || warn "Could not pull the FLUJO base image; the flujo build will fetch it itself."
+  compose pull ollama || warn "Could not pull the Ollama image; 'docker compose up' will."
 
-  step "Building the brain image (docker compose build brain)"
-  compose build brain || die "docker compose build failed."
+  step "Building the images (docker compose build brain flujo)"
+  compose build brain flujo || die "docker compose build failed."
   ok "Images ready."
 else
   step "Installing npm dependencies (npm install)"

@@ -1,4 +1,4 @@
-import type { InnerNode, Neuron, ServerStatus, Synapse, SynapseKind } from '../types';
+import type { BrainGraph, InnerNode, Neuron, ServerStatus, Synapse, SynapseKind } from '../types';
 import type { GroupMode } from '../grouping';
 import type { HeartbeatInfo } from '../data/heartbeat';
 import { NODE_TYPE_COLORS, SYNAPSE_COLORS, nodeTypeLabel, providerLabel } from '../theme';
@@ -80,6 +80,25 @@ function toggleRow(label: string, on: boolean): string {
   return `<div class="setting"><span class="sw ${on ? 'on' : 'off'}"><i></i></span>${esc(label)}<em>${on ? 'on' : 'off'}</em></div>`;
 }
 
+/** "1m 05s" countdown formatting for the next-beat timer. */
+function fmtCountdown(ms: number): string {
+  const s = Math.max(0, Math.ceil(ms / 1000));
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ${String(s % 60).padStart(2, '0')}s`;
+  return `${Math.floor(m / 60)}h ${String(m % 60).padStart(2, '0')}m`;
+}
+
+/**
+ * ECG amplitude at `dt` seconds from the nearest beat: a P–QRS–T complex
+ * about two seconds wide, drawn in real time so the R spike lands exactly on
+ * each scheduled wake-up.
+ */
+function ecgAt(dt: number): number {
+  const g = (c: number, w: number, a: number) => a * Math.exp(-((dt - c) * (dt - c)) / (2 * w * w));
+  return g(-0.9, 0.16, 0.18) + g(-0.12, 0.045, -0.22) + g(0, 0.055, 1) + g(0.13, 0.05, -0.28) + g(0.55, 0.22, 0.3);
+}
+
 interface PromptEntry {
   title: string;
   text?: string;
@@ -100,7 +119,7 @@ export interface RelationLine {
   outgoing: boolean;
 }
 
-export type ViewMode = '3d' | '2d';
+export type ViewMode = '3d' | '2d' | 'history';
 
 export class Hud {
   private $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -128,6 +147,11 @@ export class Hud {
   onFocusBehaviour: (id: string) => void = () => {};
   /** Tempo slider: re-arm the heartbeat with a new cron. */
   onTempo: (executionId: string, cron: string) => void | Promise<void> = () => {};
+  /** 💬 on the heartbeat bar: open its conversation in the chat dock. */
+  onOpenHeartbeat: (conversationId: string) => void = () => {};
+
+  /** ECG animation state. */
+  private ecgRaf = 0;
 
   constructor() {
     const search = this.$<HTMLInputElement>('search');
@@ -178,6 +202,83 @@ export class Hud {
         });
       }
     });
+
+    this.$('hb-open').addEventListener('click', () => {
+      const id = this.heartbeatInfo?.conversationId;
+      if (id) this.onOpenHeartbeat(id);
+    });
+  }
+
+  // ---- heartbeat ECG ---------------------------------------------------------
+
+  /** Run the ECG only while the bar is actually on screen. */
+  private syncEcg(): void {
+    const visible = this.heartbeatInfo && !this.$('heartbeat').classList.contains('hidden');
+    if (visible && !this.ecgRaf) {
+      const loop = () => {
+        this.drawEcg();
+        this.ecgRaf = requestAnimationFrame(loop);
+      };
+      this.ecgRaf = requestAnimationFrame(loop);
+    } else if (!visible && this.ecgRaf) {
+      cancelAnimationFrame(this.ecgRaf);
+      this.ecgRaf = 0;
+    }
+  }
+
+  private drawEcg(): void {
+    const h = this.heartbeatInfo;
+    const canvas = this.$('hb-ecg') as unknown as HTMLCanvasElement;
+    const ctx = canvas.getContext('2d');
+    if (!h || !ctx) return;
+
+    const w = canvas.width;
+    const ht = canvas.height;
+    const now = Date.now();
+    const fired = Date.parse(h.firedAt) || now;
+    const intervalS = h.cron ? cronSeconds(h.cron) : null;
+    const running = h.status === 'running';
+
+    ctx.clearRect(0, 0, w, ht);
+    const mid = ht * 0.62;
+    const amp = ht * 0.5;
+    ctx.lineWidth = 1.4;
+    ctx.strokeStyle = running ? 'rgba(255,92,138,1)' : 'rgba(255,92,138,0.75)';
+    ctx.shadowColor = 'rgba(255,92,138,0.55)';
+    ctx.shadowBlur = running ? 7 : 4;
+    ctx.beginPath();
+
+    if (intervalS) {
+      // Window = one full interval: the last spike drifts left, the next one
+      // lands on the right edge exactly when the countdown hits zero.
+      const windowMs = Math.min(intervalS, 3600) * 1000 * 1.04;
+      const intervalMs = intervalS * 1000;
+      // Slow hearts get a proportionally wider complex so the spike stays
+      // visible on a window that spans the whole interval.
+      const stretch = Math.min(1, 90 / intervalS);
+      for (let x = 0; x <= w; x++) {
+        const t = now - (w - x) * (windowMs / w);
+        // Seconds from the nearest beat (beats fire at fired + k*interval).
+        let dt = ((t - fired) % intervalMs) / 1000;
+        if (dt > intervalS / 2) dt -= intervalS;
+        if (dt < -intervalS / 2) dt += intervalS;
+        const y = mid - ecgAt(dt * stretch) * amp;
+        if (x === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+      const nextIn = intervalMs - (((now - fired) % intervalMs) + intervalMs) % intervalMs;
+      this.$('hb-next').textContent = running ? 'beating…' : `next in ${fmtCountdown(nextIn)}`;
+    } else {
+      // No readable schedule — a calm idle ripple.
+      for (let x = 0; x <= w; x++) {
+        const y = mid - Math.sin(now / 700 + x * 0.08) * ht * 0.06;
+        if (x === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+      this.$('hb-next').textContent = running ? 'beating…' : '';
+    }
+    ctx.stroke();
+    ctx.shadowBlur = 0;
   }
 
   private setPanelCollapsed(collapsed: boolean): void {
@@ -193,9 +294,10 @@ export class Hud {
     this.reader.classList.toggle('hidden', !this.selectionOpen);
     // The legend yields its corner to the reader while something is selected.
     document.body.classList.toggle('reading', this.selectionOpen);
-    // The heartbeat transcript owns the top-right corner in overview only —
+    // The heartbeat bar owns the top-right corner in overview only —
     // a focused behaviour's panel takes that spot.
-    this.$('heartbeat').classList.toggle('hidden', this.selectionOpen || !this.heartbeatInfo?.messages.length);
+    this.$('heartbeat').classList.toggle('hidden', this.selectionOpen || !this.heartbeatInfo);
+    this.syncEcg();
   }
 
   private clampPanelWidth(w: number): number {
@@ -272,18 +374,14 @@ export class Hud {
       (a.runs && a.runs > 1 ? ` <em>· ${a.runs} runs</em>` : '');
   }
 
-  /** Show / update the last-heartbeat transcript (top-right, overview only). */
+  /** Show / update the heartbeat status bar (top-right, overview only). */
   setHeartbeat(h: HeartbeatInfo | null): void {
     this.heartbeatInfo = h;
-    if (h?.messages.length) {
+    if (h) {
       this.$('hb-title').textContent = h.name;
       this.$('hb-time').textContent = h.status === 'running' ? 'beating…' : relTime(h.firedAt);
       this.$('heartbeat').classList.toggle('running', h.status === 'running');
-      const msgs = this.$('hb-msgs');
-      msgs.innerHTML = h.messages
-        .map((m) => `<div class="hb-msg ${m.role === 'user' ? 'user' : 'assistant'}">${esc(m.text)}</div>`)
-        .join('');
-      msgs.scrollTop = msgs.scrollHeight;
+      (this.$('hb-open') as unknown as HTMLButtonElement).disabled = !h.conversationId;
 
       // Tempo slider — only for schedule-driven beats we can re-arm.
       const canTempo = Boolean(h.executionId && h.cron);
@@ -308,9 +406,11 @@ export class Hud {
     this.$<HTMLSelectElement>('view-mode').value = mode;
   }
 
-  setStats(neurons: number, synapses: number, sections: number): void {
-    this.$('stat-flows').textContent = String(neurons);
-    this.$('stat-syn').textContent = String(synapses);
+  setStats(graph: BrainGraph, sections: number): void {
+    const abilities = graph.neurons.filter((n) => n.kind === 'ability').length;
+    this.$('stat-flows').textContent = String(graph.neurons.length - abilities);
+    this.$('stat-abilities').textContent = String(abilities);
+    this.$('stat-syn').textContent = String(graph.synapses.length);
     this.$('stat-sec').textContent = String(sections);
   }
 
@@ -327,6 +427,10 @@ export class Hud {
 
   /** The behaviour overview panel. */
   showPanel(n: Neuron, relations: RelationLine[], servers: Record<string, ServerStatus> = {}): void {
+    if (n.kind === 'ability') {
+      this.showAbilityPanel(n, relations, servers);
+      return;
+    }
     this.showReader(
       'behaviour',
       '',
@@ -355,12 +459,46 @@ export class Hud {
     this.syncPanels();
   }
 
+  /** Overview panel for an ability (MCP server) neuron. */
+  private showAbilityPanel(n: Neuron, relations: RelationLine[], servers: Record<string, ServerStatus>): void {
+    const color = hex(NODE_TYPE_COLORS.mcp);
+    const status = servers[n.name] ?? 'unknown';
+    this.showReader(
+      'ability',
+      color,
+      n.name,
+      n.description || 'An MCP server — a skill this brain can use.',
+      [],
+    );
+
+    this.$('p-kicker').innerHTML = `<span class="k" style="color:${color}">ability</span>`;
+
+    const users = relations.filter((r) => r.synapse.kind === 'server');
+    const chips = [
+      `<span class="chip"><span class="dot" style="color:${STATUS_COLORS[status]};background:${STATUS_COLORS[status]}"></span>${status}</span>`,
+      `<span class="chip"><b>${users.length}</b> behaviour${users.length === 1 ? '' : 's'}</span>`,
+    ];
+    this.$('p-stats').innerHTML = chips.join('');
+
+    const dot = hex(SYNAPSE_COLORS.server);
+    const items = users
+      .map((r) => `<li><span class="dot" style="color:${dot};background:${dot}"></span><b>${esc(r.otherName)}</b></li>`)
+      .join('');
+    this.$('p-rels').innerHTML = items
+      ? `<details open><summary>used by <b>${users.length}</b></summary><ul>${items}</ul></details>`
+      : '<details open><summary>used by <b>0</b></summary><ul><li>No behaviour uses this ability yet.</li></ul></details>';
+    this.$('p-hint').textContent = 'Esc or click empty space for overview';
+    this.selectionOpen = true;
+    this.syncPanels();
+  }
+
   /** Detail panel for one node inside the focused behaviour. */
   showNodePanel(
     behaviour: Neuron,
     node: InnerNode,
     servers: Record<string, ServerStatus>,
     subflowTarget: Neuron | null,
+    nodeMessages: Array<{ role: string; text: string }> = [],
   ): void {
     const color = hex(NODE_TYPE_COLORS[node.type]);
 
@@ -423,6 +561,15 @@ export class Hud {
       body += '<p class="empty">End of the behaviour — the reply is returned here.</p>';
     }
 
+    // Per-neuron conversation view: what was said AT this node in the chat
+    // dock's current conversation.
+    if (nodeMessages.length) {
+      const items = nodeMessages
+        .map((m) => `<li class="nmsg ${m.role === 'user' ? 'user' : 'ai'}">${esc(m.text.length > 400 ? `${m.text.slice(0, 400)}…` : m.text)}</li>`)
+        .join('');
+      body += `<details open><summary>conversation here <b>${nodeMessages.length}</b></summary><ul class="nmsgs">${items}</ul></details>`;
+    }
+
     this.$('p-rels').innerHTML = body;
     this.$('p-hint').textContent = 'Esc or ← to go back · click empty space for overview';
     this.selectionOpen = true;
@@ -458,7 +605,7 @@ export class Hud {
 
     const KINDS: Array<{ kind: SynapseKind; title: string; open: boolean }> = [
       { kind: 'subflow', title: 'behaviour calls', open: true },
-      { kind: 'server', title: 'shared abilities', open: false },
+      { kind: 'server', title: 'abilities used', open: false },
       { kind: 'model', title: 'shared models', open: false },
     ];
 
@@ -474,7 +621,9 @@ export class Hud {
               ? r.outgoing
                 ? `→ calls <b>${name}</b>`
                 : `← called by <b>${name}</b>`
-              : `<b>${name}</b><em class="detail">${esc(r.synapse.detail)}</em>`;
+              : kind === 'server'
+                ? `uses <b>${name}</b>`
+                : `<b>${name}</b><em class="detail">${esc(r.synapse.detail)}</em>`;
           return `<li><span class="dot" style="color:${color};background:${color}"></span>${label}</li>`;
         })
         .join('');

@@ -13,6 +13,7 @@ export const BRAINSTEM_TOOLS = [
   'perform_behaviour',
   'forget_behaviour',
   'list_skills',
+  'use_skill',
   'learn_skill',
   'forget_skill',
 ] as const;
@@ -109,13 +110,26 @@ export function buildBrainstemServer(brain: BrainRecord, flujo: FlujoClient): Mc
 
   server.tool(
     'list_skills',
-    'List your skills (MCP servers): what is installed and connected. Pass search to also browse the public registry for NEW skills to learn.',
-    { search: z.string().optional().describe('Optional: search the MCP registry for installable skills.') },
-    async ({ search }) => {
+    'List your skills (MCP servers): what is installed and connected. Pass name to see one skill\'s tools (needed before use_skill). Pass search to also browse the public registry for NEW skills to learn.',
+    {
+      search: z.string().optional().describe('Optional: search the MCP registry for installable skills.'),
+      name: z.string().optional().describe('Optional: an installed skill name — lists its tools.'),
+    },
+    async ({ search, name }) => {
       const servers = await flujo.listMcpServers();
       const installed = servers
         .map((s) => `- ${s.name}${s.name === BRAINSTEM_NAME ? ' [this is your own tool belt — protected]' : ''}${s.disabled ? ' (disabled)' : ''}`)
         .join('\n');
+      let toolList = '';
+      if (name) {
+        try {
+          const res = await flujo.listServerTools(name);
+          const lines = (res.tools ?? []).map((t) => `- ${t.name}: ${(t.description ?? '').slice(0, 120)}`);
+          toolList = `\n\nTools of "${name}":\n${lines.join('\n') || `(none${res.error ? ` — ${res.error}` : ''})`}`;
+        } catch (err) {
+          toolList = `\n\n(Could not list tools of "${name}": ${(err as Error).message})`;
+        }
+      }
       let found = '';
       if (search) {
         try {
@@ -131,7 +145,27 @@ export function buildBrainstemServer(brain: BrainRecord, flujo: FlujoClient): Mc
           found = `\n\n(Registry search failed: ${(err as Error).message})`;
         }
       }
-      return text(`Installed skills:\n${installed || '(none)'}${found}`);
+      return text(`Installed skills:\n${installed || '(none)'}${toolList}${found}`);
+    },
+  );
+
+  server.tool(
+    'use_skill',
+    'Use an installed skill directly: call one of its MCP tools and get the result. Run list_skills with name first to see the tools and their arguments.',
+    {
+      skill: z.string().describe('Installed skill (MCP server) name from list_skills.'),
+      tool: z.string().describe('Exact tool name on that skill.'),
+      args: z.record(z.unknown()).optional().describe('Arguments for the tool, as a JSON object.'),
+    },
+    async ({ skill, tool, args }) => {
+      if (skill === BRAINSTEM_NAME) return text('REFUSED: use your tool belt directly, not through use_skill (recursion).');
+      try {
+        const out = await flujo.callTool(skill, tool, args ?? {});
+        const s = typeof out === 'string' ? out : JSON.stringify(out);
+        return text(s.slice(0, 8000) || '(empty result)');
+      } catch (err) {
+        return text(`Skill call failed: ${(err as Error).message}`);
+      }
     },
   );
 

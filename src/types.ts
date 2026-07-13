@@ -78,9 +78,15 @@ export interface InnerNode {
   outputMode?: string;
 }
 
-/** One behaviour (FLUJO flow) = one neuron. */
+/**
+ * One node of the brain web. Usually a behaviour (FLUJO flow); MCP servers
+ * join the web as small `ability` neurons so learning/forgetting a skill is
+ * visible. Abilities have no inner graph and cannot run.
+ */
 export interface Neuron {
   id: string;
+  /** Absent = behaviour (a runnable flow). */
+  kind?: 'ability';
   name: string;
   description: string;
   folder: string;
@@ -114,6 +120,13 @@ export interface Synapse {
   directed: boolean;
   /** Human-readable reason, e.g. shared server / model names. */
   detail: string;
+}
+
+/** A chat message pinned to the flow node that spoke/received it. */
+export interface NodeChatMessage {
+  role: 'user' | 'assistant';
+  text: string;
+  nodeId: string;
 }
 
 export interface BrainGraph {

@@ -1,5 +1,5 @@
 import { Vector3, type Camera } from 'three';
-import type { Grouping } from '../grouping';
+import { ABILITY_GROUP, type Grouping } from '../grouping';
 import type { SectionedLayout } from '../layout/sectionedLayout';
 import type { FlowGraph } from './flowGraph';
 import { NODE_R } from './flowGraph';
@@ -98,10 +98,12 @@ export class SectionLabels extends LabelLayer {
     for (const g of grouping.groups) {
       const pos = layout.centers.get(g.id)!.clone();
       pos.y += (layout.radii.get(g.id) ?? 4) + 3;
+      const n = g.neuronIds.length;
+      const noun = g.id === ABILITY_GROUP ? (n === 1 ? 'ability' : 'abilities') : (n === 1 ? 'behaviour' : 'behaviours');
       const el = this.add(
         pos,
         'section-label',
-        `<span class="name">${escapeHtml(g.label)}</span><span class="n">${g.neuronIds.length} behaviour${g.neuronIds.length === 1 ? '' : 's'}</span>`,
+        `<span class="name">${escapeHtml(g.label)}</span><span class="n">${n} ${noun}</span>`,
       );
       el.style.setProperty('--c', '#' + g.color.getHexString());
     }
@@ -113,7 +115,12 @@ export class SectionLabels extends LabelLayer {
  * clickable and select the node, so small nodes stay easy to hit.
  */
 export class FlowNodeLabels extends LabelLayer {
-  constructor(neuron: Neuron, flowGraph: FlowGraph, onSelect: (nodeId: string) => void) {
+  constructor(
+    neuron: Neuron,
+    flowGraph: FlowGraph,
+    onSelect: (nodeId: string) => void,
+    msgCounts?: Map<string, number>,
+  ) {
     super(true);
     flowGraph.group.updateMatrixWorld(true);
     for (const node of neuron.inner.nodes) {
@@ -121,10 +128,12 @@ export class FlowNodeLabels extends LabelLayer {
       if (!local) continue;
       const pos = flowGraph.group.localToWorld(local.clone().add(new Vector3(0, -NODE_R * 1.45, 0)));
       const color = '#' + NODE_TYPE_COLORS[node.type].toString(16).padStart(6, '0');
+      const count = msgCounts?.get(node.id) ?? 0;
       const el = this.add(
         pos,
         'flow-label',
-        `<span class="t" style="color:${color}">${nodeTypeLabel(node.type)}</span><span class="l">${escapeHtml(node.label)}</span>`,
+        `<span class="t" style="color:${color}">${nodeTypeLabel(node.type)}</span><span class="l">${escapeHtml(node.label)}</span>` +
+          (count ? `<span class="mc">💬 ${count}</span>` : ''),
         0,
         'below',
       );

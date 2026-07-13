@@ -5,6 +5,8 @@ interface Brain {
   id: string;
   name: string;
   lifeGoal: string;
+  /** FLUJO base URL as the manager reaches it (for the one-brain-per-instance check). */
+  flujoUrl?: string;
   status: 'provisioning' | 'ready' | 'error';
   statusDetail?: string;
   modelName?: string;
@@ -18,6 +20,10 @@ interface BrainsResponse {
   brains: Brain[];
   docker: boolean;
   ollama: boolean;
+  /** The default FLUJO as the manager reaches it (adopt mode's target). */
+  defaultFlujo?: string;
+  /** The default FLUJO as the browser reaches it (adopt mode's home). */
+  defaultFlujoEditor?: string;
 }
 
 const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T;
@@ -41,12 +47,16 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
 // with plain-language tiers.
 // ---------------------------------------------------------------------------
 
-type Tier = 'best' | 'balanced' | 'fast' | 'small' | 'big' | 'tiny';
+/** Matrix coordinate: 1 = cheap/simple … 3 = pricey/smart. */
+type Axis = 1 | 2 | 3;
 
 interface ModelChoice {
   id: string;
   label: string;
-  tier: Tier;
+  /** Cost axis — for local models this reads as hardware weight (light → heavy). */
+  cost: Axis;
+  /** Capability axis (simple → smart). */
+  smart: Axis;
   recommended?: boolean;
 }
 
@@ -67,10 +77,10 @@ const OLLAMA: Provider = {
   mark: '🦙',
   color: '#a78bfa',
   models: [
-    { id: 'qwen2.5:7b', label: 'Qwen 2.5 · 7B', tier: 'balanced', recommended: true },
-    { id: 'llama3.1:8b', label: 'Llama 3.1 · 8B', tier: 'small' },
-    { id: 'qwen2.5:14b', label: 'Qwen 2.5 · 14B', tier: 'big' },
-    { id: 'qwen3.5:0.8b', label: 'Qwen 3.5 · 0.8B', tier: 'tiny' },
+    { id: 'llama3.2:3b', label: 'Llama 3.2 · 3B', cost: 1, smart: 1 },
+    { id: 'qwen3:8b', label: 'Qwen 3 · 8B', cost: 2, smart: 2, recommended: true },
+    { id: 'gemma3:12b', label: 'Gemma 3 · 12B', cost: 2, smart: 3 },
+    { id: 'qwen3:30b', label: 'Qwen 3 · 30B', cost: 3, smart: 3 },
   ],
 };
 
@@ -82,9 +92,11 @@ const REMOTE_PROVIDERS: Provider[] = [
     color: '#8b5cf6',
     keyUrl: 'https://openrouter.ai/settings/keys',
     models: [
-      { id: 'anthropic/claude-sonnet-4.5', label: 'Claude Sonnet 4.5', tier: 'balanced', recommended: true },
-      { id: 'openai/gpt-5', label: 'GPT-5', tier: 'best' },
-      { id: 'google/gemini-2.5-flash', label: 'Gemini 2.5 Flash', tier: 'fast' },
+      { id: 'google/gemini-3.1-flash-lite', label: 'Gemini 3.1 Flash-Lite', cost: 1, smart: 1 },
+      { id: 'x-ai/grok-4.3', label: 'Grok 4.3', cost: 1, smart: 2 },
+      { id: 'anthropic/claude-sonnet-5', label: 'Claude Sonnet 5', cost: 2, smart: 2, recommended: true },
+      { id: 'openai/gpt-5.5', label: 'GPT-5.5', cost: 2, smart: 3 },
+      { id: 'anthropic/claude-opus-4.8', label: 'Claude Opus 4.8', cost: 3, smart: 3 },
     ],
   },
   {
@@ -94,9 +106,11 @@ const REMOTE_PROVIDERS: Provider[] = [
     color: '#0ea5e9',
     keyUrl: 'https://app.requesty.ai/api-keys',
     models: [
-      { id: 'anthropic/claude-sonnet-4-5', label: 'Claude Sonnet 4.5', tier: 'balanced', recommended: true },
-      { id: 'openai/gpt-5', label: 'GPT-5', tier: 'best' },
-      { id: 'google/gemini-2.5-flash', label: 'Gemini 2.5 Flash', tier: 'fast' },
+      { id: 'google/gemini-3.1-flash-lite', label: 'Gemini 3.1 Flash-Lite', cost: 1, smart: 1 },
+      { id: 'xai/grok-4.3', label: 'Grok 4.3', cost: 1, smart: 2 },
+      { id: 'anthropic/claude-sonnet-5', label: 'Claude Sonnet 5', cost: 2, smart: 2, recommended: true },
+      { id: 'openai/gpt-5.5', label: 'GPT-5.5', cost: 2, smart: 3 },
+      { id: 'anthropic/claude-opus-4-8', label: 'Claude Opus 4.8', cost: 3, smart: 3 },
     ],
   },
   {
@@ -106,9 +120,10 @@ const REMOTE_PROVIDERS: Provider[] = [
     color: '#10a37f',
     keyUrl: 'https://platform.openai.com/api-keys',
     models: [
-      { id: 'gpt-5', label: 'GPT-5', tier: 'best' },
-      { id: 'gpt-5-mini', label: 'GPT-5 mini', tier: 'balanced', recommended: true },
-      { id: 'gpt-4o-mini', label: 'GPT-4o mini', tier: 'fast' },
+      { id: 'gpt-5.6-luna', label: 'GPT-5.6 Luna', cost: 1, smart: 1 },
+      { id: 'gpt-5.6-terra', label: 'GPT-5.6 Terra', cost: 2, smart: 2, recommended: true },
+      { id: 'gpt-5.5', label: 'GPT-5.5', cost: 2, smart: 3 },
+      { id: 'gpt-5.6-sol', label: 'GPT-5.6 Sol', cost: 3, smart: 3 },
     ],
   },
   {
@@ -118,9 +133,10 @@ const REMOTE_PROVIDERS: Provider[] = [
     color: '#d97757',
     keyUrl: 'https://console.anthropic.com/settings/keys',
     models: [
-      { id: 'claude-opus-4-5', label: 'Claude Opus 4.5', tier: 'best' },
-      { id: 'claude-sonnet-4-5', label: 'Claude Sonnet 4.5', tier: 'balanced', recommended: true },
-      { id: 'claude-haiku-4-5', label: 'Claude Haiku 4.5', tier: 'fast' },
+      { id: 'claude-haiku-4-5', label: 'Claude Haiku 4.5', cost: 1, smart: 1 },
+      { id: 'claude-sonnet-5', label: 'Claude Sonnet 5', cost: 2, smart: 2, recommended: true },
+      { id: 'claude-opus-4-8', label: 'Claude Opus 4.8', cost: 3, smart: 3 },
+      { id: 'claude-fable-5', label: 'Claude Fable 5', cost: 3, smart: 3 },
     ],
   },
   {
@@ -130,8 +146,9 @@ const REMOTE_PROVIDERS: Provider[] = [
     color: '#4285f4',
     keyUrl: 'https://aistudio.google.com/apikey',
     models: [
-      { id: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro', tier: 'best' },
-      { id: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash', tier: 'fast', recommended: true },
+      { id: 'gemini-3.1-flash-lite', label: 'Gemini 3.1 Flash-Lite', cost: 1, smart: 1 },
+      { id: 'gemini-3.5-flash', label: 'Gemini 3.5 Flash', cost: 2, smart: 2, recommended: true },
+      { id: 'gemini-3.1-pro', label: 'Gemini 3.1 Pro', cost: 3, smart: 3 },
     ],
   },
   {
@@ -141,8 +158,10 @@ const REMOTE_PROVIDERS: Provider[] = [
     color: '#fa520f',
     keyUrl: 'https://console.mistral.ai/api-keys',
     models: [
-      { id: 'mistral-large-latest', label: 'Mistral Large', tier: 'best' },
-      { id: 'mistral-small-latest', label: 'Mistral Small', tier: 'fast', recommended: true },
+      { id: 'ministral-8b-latest', label: 'Ministral 8B', cost: 1, smart: 1 },
+      { id: 'mistral-small-latest', label: 'Mistral Small 4', cost: 1, smart: 2, recommended: true },
+      { id: 'mistral-medium-latest', label: 'Mistral Medium 3.5', cost: 2, smart: 3 },
+      { id: 'mistral-large-latest', label: 'Mistral Large 3', cost: 3, smart: 3 },
     ],
   },
   {
@@ -152,8 +171,8 @@ const REMOTE_PROVIDERS: Provider[] = [
     color: '#e2e8f0',
     keyUrl: 'https://console.x.ai',
     models: [
-      { id: 'grok-4', label: 'Grok 4', tier: 'best', recommended: true },
-      { id: 'grok-3-mini', label: 'Grok 3 mini', tier: 'fast' },
+      { id: 'grok-4.1-fast', label: 'Grok 4.1 Fast', cost: 1, smart: 2 },
+      { id: 'grok-4.3', label: 'Grok 4.3', cost: 2, smart: 3, recommended: true },
     ],
   },
 ];
@@ -230,6 +249,22 @@ function positionCard(): void {
   orbit.card.style.top = `${cy - radius + 56}px`;
 }
 
+/**
+ * "awake" vs "idle" for a ready brain: idle when its scheduler is paused or
+ * nothing is armed to wake it — it only acts when spoken to.
+ */
+async function isIdle(b: Brain): Promise<boolean> {
+  try {
+    const res = await fetch(`/brains/${encodeURIComponent(b.id)}/flujo/api/planned-executions`);
+    if (!res.ok) return false;
+    const data = (await res.json()) as { paused?: boolean; executions?: Array<{ execution?: { enabled?: boolean } }> };
+    if (data.paused) return true;
+    return !(data.executions ?? []).some((e) => e.execution?.enabled);
+  } catch {
+    return false; // unknowable — keep "awake"
+  }
+}
+
 function renderCard(b: Brain): void {
   const open =
     b.status === 'ready'
@@ -247,13 +282,38 @@ function renderCard(b: Brain): void {
     <p class="goal">${esc(b.lifeGoal)}</p>
     ${detail}
     <p class="meta">${esc(b.modelName ?? t('card.noModel'))} · ${esc(t(`card.kind.${b.kind}`))} · ${esc(born)}</p>
-    <footer>${open}${editor}<button class="forget" type="button">${esc(t('card.forget'))}</button></footer>`;
+    <footer>${open}${editor}${
+      b.kind === 'managed' && b.status !== 'provisioning'
+        ? `<button class="rebuild" type="button" title="${esc(t('card.rebuildConfirm', { name: b.name }))}">${esc(t('card.rebuild'))}</button>`
+        : ''
+    }<button class="forget" type="button">${esc(t('card.forget'))}</button></footer>`;
   orbit.cardBody.querySelector<HTMLButtonElement>('.forget')!.addEventListener('click', async () => {
     if (!confirm(t('card.forgetConfirm', { name: b.name }))) return;
     await api(`/brains/${b.id}`, { method: 'DELETE' });
     deselect();
     void refresh();
   });
+  orbit.cardBody.querySelector<HTMLButtonElement>('.rebuild')?.addEventListener('click', async () => {
+    if (!confirm(t('card.rebuildConfirm', { name: b.name }))) return;
+    try {
+      await api(`/brains/${b.id}/rebuild`, { method: 'POST' });
+    } catch (err) {
+      alert((err as Error).message);
+    }
+    void refresh();
+  });
+
+  // A ready brain may still be idle (paused / nothing wakes it) — refine async.
+  if (b.status === 'ready') {
+    void isIdle(b).then((idle) => {
+      const chip = orbit.cardBody.querySelector<HTMLElement>('.status.ready');
+      if (idle && chip && activeBrainId === b.id) {
+        chip.classList.remove('ready');
+        chip.classList.add('idle');
+        chip.textContent = `◦ ${t('status.idle')}`;
+      }
+    });
+  }
 }
 
 function selectBrain(id: string): void {
@@ -358,11 +418,40 @@ orbit.center.addEventListener('click', (e) => {
 let pollTimer: ReturnType<typeof setTimeout> | null = null;
 let lastSnapshot = '';
 let ollamaAvailable = false;
+/** Optimistic until the first /brains answer — the wizard opens only after it. */
+let dockerAvailable = true;
+let defaultFlujoEditor = '';
+
+/** No Docker → brains can only adopt the default FLUJO; say so up front. */
+function renderAdoptBanner(): void {
+  const banner = $('adopt-mode');
+  banner.classList.toggle('hidden', dockerAvailable);
+  if (!dockerAvailable) {
+    banner.textContent = t('lobby.adoptMode', { url: defaultFlujoEditor || 'http://localhost:4200' });
+  }
+}
+
+/** In adopt-only mode the "+" works exactly once: one FLUJO, one brain. */
+function syncPlusButton(data: BrainsResponse): void {
+  const norm = (u: string) => u.replace(/\/+$/, '');
+  const taken =
+    !data.docker &&
+    Boolean(data.defaultFlujo) &&
+    data.brains.some((b) => b.flujoUrl && norm(b.flujoUrl) === norm(data.defaultFlujo!));
+  const center = $('orbit-center') as HTMLButtonElement;
+  center.disabled = taken;
+  center.title = taken ? t('orbit.taken') : '';
+  $('orbit-center-label').textContent = taken ? t('orbit.taken') : t('orbit.new');
+}
 
 async function refresh(): Promise<void> {
   try {
     const data = await api<BrainsResponse>('/brains');
     ollamaAvailable = data.ollama;
+    dockerAvailable = data.docker;
+    defaultFlujoEditor = data.defaultFlujoEditor ?? '';
+    renderAdoptBanner();
+    syncPlusButton(data);
     $('manager-offline').classList.add('hidden');
     const snapshot = JSON.stringify(data.brains.map((b) => [b.id, b.name, b.status, b.statusDetail, b.modelName]));
     if (snapshot !== lastSnapshot) {
@@ -381,6 +470,82 @@ async function refresh(): Promise<void> {
     }
   }
 }
+
+// ---------------------------------------------------------------------------
+// Connect to a FLUJO elsewhere in the network — a brain grown elsewhere joins
+// the lobby as it is; an empty instance is registered and can grow one.
+// ---------------------------------------------------------------------------
+
+const connectOverlay = $('connect-overlay');
+
+/** `M`, `192.168.1.50`, `http://M:4200/` → canonical FLUJO base URL
+ *  (scheme defaults to http, port to FLUJO's 4200). */
+function normalizeFlujoAddress(raw: string): string | null {
+  let s = raw.trim();
+  if (!s) return null;
+  if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(s)) s = `http://${s}`;
+  let url: URL;
+  try {
+    url = new URL(s);
+  } catch {
+    return null;
+  }
+  if (!/^https?:$/.test(url.protocol) || !url.hostname) return null;
+  const port = url.port || (url.protocol === 'https:' ? '' : '4200');
+  return `${url.protocol}//${url.hostname}${port ? `:${port}` : ''}`;
+}
+
+function openConnect(): void {
+  const status = $('connect-status');
+  status.classList.add('hidden');
+  status.textContent = '';
+  connectOverlay.classList.remove('hidden');
+  connectOverlay.querySelector<HTMLInputElement>('#connect-url')!.focus();
+}
+
+function closeConnect(): void {
+  connectOverlay.classList.add('hidden');
+}
+
+async function submitConnect(): Promise<void> {
+  const input = connectOverlay.querySelector<HTMLInputElement>('#connect-url')!;
+  const go = connectOverlay.querySelector<HTMLButtonElement>('#connect-go')!;
+  const status = $('connect-status');
+  const url = normalizeFlujoAddress(input.value);
+  if (!url) return;
+  go.disabled = true;
+  status.classList.remove('hidden');
+  status.textContent = t('wiz.net.checking');
+  try {
+    const brain = await api<Brain & { hasStem?: boolean }>('/connect', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url }),
+    });
+    await refresh();
+    if (brain.hasStem === false) {
+      // Keep the dialog open so the note is read — the brain is selected behind it.
+      status.textContent = t('connect.noStem');
+    } else {
+      closeConnect();
+    }
+    selectBrain(brain.id);
+  } catch (err) {
+    status.textContent = `⚠ ${(err as Error).message}`;
+  } finally {
+    go.disabled = false;
+  }
+}
+
+$('connect-flujo').addEventListener('click', openConnect);
+$('connect-close').addEventListener('click', closeConnect);
+$('connect-go').addEventListener('click', () => void submitConnect());
+connectOverlay.addEventListener('click', (e) => {
+  if (e.target === connectOverlay) closeConnect();
+});
+connectOverlay.querySelector<HTMLInputElement>('#connect-url')!.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') void submitConnect();
+});
 
 // ---------------------------------------------------------------------------
 // Wizard — big buttons, few words. where → provider → (key) → model → soul.
@@ -519,8 +684,27 @@ function wizSteps(): StepId[] {
   return base;
 }
 
+/** Models already present in the default FLUJO (adopted brains can reuse one). */
+function loadExistingModels(): void {
+  if (existingModels !== null) return;
+  void api<Array<{ id: string; name: string; displayName?: string }>>('/default-flujo/models')
+    .then((models) => {
+      existingModels = models;
+      if (wizOpen && wizStep === 'soul') renderWizard();
+    })
+    .catch(() => {
+      existingModels = [];
+    });
+}
+
 function openWizard(): void {
   wiz = freshWiz();
+  // No Docker → managed brains are impossible; every new brain adopts the
+  // stack's default FLUJO instance.
+  if (!dockerAvailable) {
+    wiz.adopt = true;
+    loadExistingModels();
+  }
   wizStep = 'where';
   wizOpen = true;
   overlay.classList.remove('hidden');
@@ -599,24 +783,42 @@ function modelListsHtml(prov: Provider): string {
          </div>
          <p class="wiz-group"></p>`
       : '';
-  const curated = prov.models
-    .filter((m) => !(prov.id === OLLAMA.id && ollamaTags?.includes(m.id)))
-    .map((m) =>
-      choiceHtml({
-        key: `m:${m.id}`,
-        icon: '✨',
-        title: m.label,
-        sub: t(`tier.${m.tier}`),
-        badge: m.recommended ? t('tier.recommended') : undefined,
-      }),
-    )
-    .join('');
   const custom = wiz.customModel
     ? `<input id="wiz-custom-model" autocomplete="off" placeholder="${esc(t('wiz.model.customPh'))}" value="${esc(wiz.model ?? '')}" />`
     : choiceHtml({ key: 'custom', icon: '⌨️', title: t('wiz.model.custom'), sub: t('wiz.model.customPh') });
   return `${installed}
-    <div class="wiz-choices">${curated}${wiz.customModel ? '' : custom}</div>
+    ${matrixHtml(prov)}
+    <div class="wiz-choices">${wiz.customModel ? '' : custom}</div>
     ${wiz.customModel ? custom : ''}`;
+}
+
+/** Curated picks laid out on a cheap↔pricey × simple↔smart grid. */
+function matrixHtml(prov: Provider): string {
+  const models = prov.models.filter((m) => !(prov.id === OLLAMA.id && ollamaTags?.includes(m.id)));
+  if (!models.length) return '';
+  // Row 0 is the top of the grid, so the smartest models sit up there.
+  const cells: string[][] = Array.from({ length: 9 }, () => []);
+  for (const m of models) {
+    cells[(3 - m.smart) * 3 + (m.cost - 1)].push(
+      `<button type="button" class="wiz-choice wiz-cell-pick" data-key="m:${esc(m.id)}">
+        <b>${esc(m.label)}</b>
+        ${m.recommended ? `<span class="badge">${esc(t('tier.recommended'))}</span>` : ''}
+      </button>`,
+    );
+  }
+  const local = prov.id === OLLAMA.id;
+  return `<div class="wiz-matrix">
+    <div class="wiz-axis-y" aria-hidden="true">
+      <span>${esc(t('wiz.matrix.smart'))}</span><span>${esc(t('wiz.matrix.simple'))}</span>
+    </div>
+    <div class="wiz-matrix-grid">
+      ${cells.map((c) => `<div class="wiz-cell${c.length ? '' : ' empty'}">${c.join('')}</div>`).join('')}
+    </div>
+    <div class="wiz-axis-x" aria-hidden="true">
+      <span>${esc(t(local ? 'wiz.matrix.light' : 'wiz.matrix.cheap'))}</span>
+      <span>${esc(t(local ? 'wiz.matrix.heavy' : 'wiz.matrix.pricey'))}</span>
+    </div>
+  </div>`;
 }
 
 /** Live search results: installed tags + Ollama library, or the provider catalog. */
@@ -742,14 +944,21 @@ function stepBodyHtml(): string {
             .map((m) => `<option value="${esc(m.id)}"${m.id === wiz.existingId ? ' selected' : ''}>${esc(m.displayName ?? m.name)}</option>`)
             .join('')
         : `<option value="">${esc(t('wiz.adv.existingNew'))}</option>`;
+      // Without Docker the adopt choice is not a choice — show it as a fact
+      // instead of a checkbox.
+      const adoptRow = dockerAvailable
+        ? `<label class="check"><input type="checkbox" id="wiz-adopt"${wiz.adopt ? ' checked' : ''} /> ${esc(t('wiz.adv.adopt'))}</label>`
+        : '';
+      const adoptNote = dockerAvailable ? '' : `<p class="wiz-adoptnote">🐳 ${esc(t('wiz.soul.adoptForced'))}</p>`;
       return `<h3>${esc(t('wiz.soul.title'))}</h3>
         <label class="wiz-field">${esc(t('wiz.soul.goal'))}
           <textarea id="wiz-goal" rows="3" placeholder="${esc(t('wiz.soul.goalPh'))}">${esc(wiz.goal)}</textarea>
           <small>${esc(t('wiz.soul.goalHint'))}</small>
         </label>
-        <details class="wiz-adv"${wiz.adopt || wiz.wake || !wiz.heartbeat ? ' open' : ''}>
+        ${adoptNote}
+        <details class="wiz-adv"${(dockerAvailable && wiz.adopt) || wiz.wake || !wiz.heartbeat ? ' open' : ''}>
           <summary>${esc(t('wiz.adv'))}</summary>
-          <label class="check"><input type="checkbox" id="wiz-adopt"${wiz.adopt ? ' checked' : ''} /> ${esc(t('wiz.adv.adopt'))}</label>
+          ${adoptRow}
           <label class="check wiz-existing${wiz.adopt ? '' : ' hidden'}">${esc(t('wiz.adv.existing'))}
             <select id="wiz-existing">${existingOpts}</select>
           </label>
@@ -948,26 +1157,18 @@ function wireWizard(): void {
   const goalInput = wizard.querySelector<HTMLTextAreaElement>('#wiz-goal');
   if (goalInput) {
     const createBtn = wizard.querySelector<HTMLButtonElement>('#wiz-create')!;
-    const adopt = wizard.querySelector<HTMLInputElement>('#wiz-adopt')!;
+    // Absent when Docker is unavailable (adopt is forced, not a checkbox).
+    const adopt = wizard.querySelector<HTMLInputElement>('#wiz-adopt');
     const heartbeat = wizard.querySelector<HTMLInputElement>('#wiz-heartbeat')!;
     const sync = () => {
       wiz.goal = goalInput.value.trim();
       createBtn.disabled = !wiz.goal || wiz.busy;
     };
     goalInput.addEventListener('input', sync);
-    adopt.addEventListener('change', () => {
+    adopt?.addEventListener('change', () => {
       wiz.adopt = adopt.checked;
       wizard.querySelector('.wiz-existing')?.classList.toggle('hidden', !wiz.adopt);
-      if (wiz.adopt && existingModels === null) {
-        void api<Array<{ id: string; name: string; displayName?: string }>>('/default-flujo/models')
-          .then((models) => {
-            existingModels = models;
-            if (wizOpen && wizStep === 'soul') renderWizard();
-          })
-          .catch(() => {
-            existingModels = [];
-          });
-      }
+      if (wiz.adopt) loadExistingModels();
     });
     wizard.querySelector<HTMLSelectElement>('#wiz-existing')?.addEventListener('change', (e) => {
       wiz.existingId = (e.target as HTMLSelectElement).value;
@@ -1041,6 +1242,7 @@ langSelect.addEventListener('change', () => setLang(langSelect.value as Lang));
 
 onLangChange(() => {
   applyI18n(document);
+  renderAdoptBanner();
   const active = brains.find((b) => b.id === activeBrainId);
   if (active) renderCard(active);
   if (wizOpen) renderWizard();

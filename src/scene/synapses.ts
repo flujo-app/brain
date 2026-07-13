@@ -26,8 +26,6 @@ interface Edge {
   /** Per-point intensity: long edges fade toward their middle. */
   profile: Float32Array;
   color: Color;
-  speed: number;
-  phase: number;
 }
 
 export class SynapseField {
@@ -41,6 +39,8 @@ export class SynapseField {
 
   /** Execution flash per edge (decays each frame). */
   private boosts!: Float32Array;
+  /** Flash travel direction: 1 = along the synapse, -1 = reversed. */
+  private flashDir!: Float32Array;
   private lastTime = 0;
   // Last recolor() inputs, so flashes can re-derive an edge's resting colour.
   private lastActive: Set<number> | null = null;
@@ -55,7 +55,7 @@ export class SynapseField {
     const ctrl = new Vector3();
     const pt = new Vector3();
 
-    graph.synapses.forEach((s, i) => {
+    graph.synapses.forEach((s) => {
       const a = positions.get(s.source);
       const b = positions.get(s.target);
       if (!a || !b) return;
@@ -91,14 +91,7 @@ export class SynapseField {
         profile[j] = 1 - fade * Math.pow(Math.sin(Math.PI * t), 1.4);
       }
 
-      this.edges.push({
-        synapse: s,
-        points,
-        profile,
-        color,
-        speed: 0.12 + ((i * 2654435761) % 1000) / 1000 * 0.35 + (s.kind === 'subflow' ? 0.2 : 0),
-        phase: ((i * 40503) % 1000) / 1000,
-      });
+      this.edges.push({ synapse: s, points, profile, color });
 
       for (let j = 0; j < SEG; j++) {
         linePos.push(
@@ -171,7 +164,9 @@ export class SynapseField {
       lc[o] = e.color.r * iA; lc[o + 1] = e.color.g * iA; lc[o + 2] = e.color.b * iA;
       lc[o + 3] = e.color.r * iB; lc[o + 4] = e.color.g * iB; lc[o + 5] = e.color.b * iB;
     }
-    const pm = m * 1.6;
+    // Pulses are interaction-only: they light up with an execution flash
+    // (subflow handoff, tool call) and vanish with it — no ambient traffic.
+    const pm = (this.boosts ? this.boosts[i] : 0) * 2.0;
     pc[i * 3] = e.color.r * pm; pc[i * 3 + 1] = e.color.g * pm; pc[i * 3 + 2] = e.color.b * pm;
   }
 
@@ -190,49 +185,52 @@ export class SynapseField {
     this.pulseColors.needsUpdate = true;
   }
 
-  /** Flash the subflow axon source -> target (a live behaviour call). */
+  /** Flash the synapse source -> target (a live behaviour call or tool use). */
   flash(sourceId: string, targetId: string): void {
     const i = this.edges.findIndex(
-      (e) => e.synapse.kind === 'subflow' && e.synapse.source === sourceId && e.synapse.target === targetId,
+      (e) =>
+        (e.synapse.source === sourceId && e.synapse.target === targetId) ||
+        (!e.synapse.directed && e.synapse.source === targetId && e.synapse.target === sourceId),
     );
     if (i < 0) return;
     if (!this.boosts || this.boosts.length !== this.edges.length) this.boosts = new Float32Array(this.edges.length);
+    if (!this.flashDir || this.flashDir.length !== this.edges.length) this.flashDir = new Float32Array(this.edges.length);
     this.boosts[i] = 1;
+    // The pulse travels from the acting end toward the other.
+    this.flashDir[i] = this.edges[i].synapse.source === sourceId ? 1 : -1;
   }
 
-  /** Advance travelling signal positions along the curve. Cheap; call every frame. */
+  /** Decay execution flashes and move their pulses. Cheap; call every frame. */
   animate(time: number): void {
     const dt = Math.min(0.1, Math.max(0, time - this.lastTime));
     this.lastTime = time;
+    if (!this.boosts) return;
 
-    // Decay execution flashes and rewrite just the affected edges.
-    if (this.boosts) {
-      let touched = false;
-      for (let i = 0; i < this.boosts.length; i++) {
-        if (this.boosts[i] <= 0.01) continue;
-        this.boosts[i] *= Math.exp(-dt * 1.6);
-        if (this.boosts[i] <= 0.01) this.boosts[i] = 0;
-        this.writeEdge(i, this.restingM(i) + this.boosts[i] * 1.2);
-        touched = true;
-      }
-      if (touched) {
-        this.lineColors.needsUpdate = true;
-        this.pulseColors.needsUpdate = true;
-      }
-    }
-
+    // Each flash decays while its pulse launches from the acting end and
+    // eases toward the other; when the flash dies the pulse goes with it.
     const pp = this.pulsePos.array as Float32Array;
-    this.edges.forEach((e, i) => {
-      let f = (time * e.speed + e.phase) % 1;
-      if (!e.synapse.directed) f = f < 0.5 ? f * 2 : (1 - f) * 2;
+    let touched = false;
+    for (let i = 0; i < this.boosts.length; i++) {
+      if (this.boosts[i] <= 0.01) continue;
+      this.boosts[i] *= Math.exp(-dt * 1.6);
+      if (this.boosts[i] <= 0.01) this.boosts[i] = 0;
+      this.writeEdge(i, this.restingM(i) + this.boosts[i] * 1.2);
+
+      const along = 1 - this.boosts[i];
+      const f = this.flashDir[i] >= 0 ? along : 1 - along;
       const x = f * SEG;
       const j = Math.min(SEG - 1, Math.floor(x));
       const t = x - j;
-      const p = e.points;
+      const p = this.edges[i].points;
       pp[i * 3] = p[j * 3] + (p[(j + 1) * 3] - p[j * 3]) * t;
       pp[i * 3 + 1] = p[j * 3 + 1] + (p[(j + 1) * 3 + 1] - p[j * 3 + 1]) * t;
       pp[i * 3 + 2] = p[j * 3 + 2] + (p[(j + 1) * 3 + 2] - p[j * 3 + 2]) * t;
-    });
-    this.pulsePos.needsUpdate = true;
+      touched = true;
+    }
+    if (touched) {
+      this.lineColors.needsUpdate = true;
+      this.pulseColors.needsUpdate = true;
+      this.pulsePos.needsUpdate = true;
+    }
   }
 }

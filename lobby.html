@@ -30,6 +30,8 @@
         <span data-i18n="lobby.offline">⚠ the brain keeper is not running — start it with</span>
         <code>cd manager && npm run dev</code>
       </p>
+      <!-- Filled by lobby.ts (needs the FLUJO URL interpolated). -->
+      <p id="adopt-mode" class="notice hidden"></p>
 
       <section id="orbit-section">
         <div class="orbit-wrap" id="orbit-wrap">
@@ -42,11 +44,34 @@
           <div class="orbit-card" id="orbit-card"><div class="connector"></div><div id="orbit-card-body"></div></div>
         </div>
         <p class="orbit-hint" id="orbit-hint" data-i18n="orbit.hint">click a brain to visit it — click + to grow a new one</p>
+        <button id="connect-flujo" class="connect-link" type="button">
+          🔗 <span data-i18n="orbit.connect">connect to a FLUJO in your network</span>
+        </button>
       </section>
     </main>
 
     <div class="wizard-overlay hidden" id="wizard-overlay" role="dialog" aria-modal="true">
       <div class="wizard" id="wizard"></div>
+    </div>
+
+    <div class="wizard-overlay hidden" id="connect-overlay" role="dialog" aria-modal="true">
+      <div class="wizard">
+        <header>
+          <h2 data-i18n="connect.title">Connect to a FLUJO in your network</h2>
+          <button type="button" class="wiz-close" id="connect-close" aria-label="close">×</button>
+        </header>
+        <div class="wiz-body">
+          <p class="wiz-desc" data-i18n="connect.desc">Enter the address of a running FLUJO instance.</p>
+          <label class="wiz-field">
+            <input id="connect-url" type="text" placeholder="http://192.168.1.50:4200" autocomplete="off" spellcheck="false" />
+          </label>
+          <p id="connect-status" class="connect-status hidden"></p>
+        </div>
+        <footer class="wiz-footer">
+          <span></span><span></span>
+          <button type="button" class="wiz-next" id="connect-go" data-i18n="connect.go">connect</button>
+        </footer>
+      </div>
     </div>
 
     <script type="module" src="/src/lobby.ts"></script>

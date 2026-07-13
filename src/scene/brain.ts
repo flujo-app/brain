@@ -14,7 +14,8 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 
-import type { BrainGraph, Neuron, SynapseKind } from '../types';
+import type { BrainGraph, Neuron, NodeChatMessage, SynapseKind } from '../types';
+import { abilityForTool } from '../data/distill';
 import { BACKGROUND, nodeTypeLabel } from '../theme';
 import { groupNeurons, type GroupMode } from '../grouping';
 import { computeSectionedLayout, type SectionedLayout } from '../layout/sectionedLayout';
@@ -76,6 +77,8 @@ export class Brain {
   /** Chat output floating above the behaviour that produced it. */
   private bubbles = new ChatBubbleLayer();
   private bubbleV = new Vector3();
+  /** The chat dock's conversation, grouped by the node that spoke. */
+  private convByNode = new Map<string, NodeChatMessage[]>();
 
   private targetLookAt = new Vector3();
   /** Desired camera position while flying in/out of a focus; null = free. */
@@ -129,7 +132,7 @@ export class Brain {
     this.wireInput();
     window.addEventListener('resize', this.onWindowResize);
 
-    this.hud.setStats(graph.neurons.length, graph.synapses.length, this.currentGroupCount());
+    this.hud.setStats(graph, this.currentGroupCount());
 
     // Deep link: ?focus=<behaviour name or id> jumps straight into it.
     const wanted = new URLSearchParams(location.search).get('focus')?.toLowerCase();
@@ -202,7 +205,7 @@ export class Brain {
     this.hoveredId = null;
     this.hud.hidePanel();
     this.build();
-    this.hud.setStats(graph.neurons.length, graph.synapses.length, this.currentGroupCount());
+    this.hud.setStats(graph, this.currentGroupCount());
     // Restore focus if that behaviour still exists after the refresh.
     if (hadFocus && graph.neurons.some((n) => n.id === hadFocus)) this.setFocus(hadFocus);
   }
@@ -265,7 +268,7 @@ export class Brain {
       if (mode === this.groupMode) return;
       this.groupMode = mode;
       this.resetToOverview();
-      this.hud.setStats(this.graph.neurons.length, this.graph.synapses.length, this.currentGroupCount());
+      this.hud.setStats(this.graph, this.currentGroupCount());
     };
     this.hud.onFollow = (on) => {
       this.followExec = on;
@@ -362,30 +365,42 @@ export class Brain {
     this.selectedNodeId = null;
     this.hoveredNodeId = null;
     this.controls.autoRotate = false;
-    this.bloomTarget = BLOOM_FOCUS;
-    // Clear the stage: galaxy clouds and section names recede behind the graph.
-    setNebulaeDim(this.nebulae, 0.12);
-    this.labels?.setHidden(true);
 
     const neuron = this.graph.neurons.find((n) => n.id === id)!;
     const home = this.layout.positions.get(id) ?? new Vector3();
+    const isAbility = neuron.kind === 'ability';
 
-    // Replace the glowing star with the behaviour's actual graph, oriented
-    // toward the camera, then fly in to frame it head-on.
     this.clearFlowGraph();
-    this.flowGraph = new FlowGraph(neuron, this.graph.servers);
-    this.flowGraph.group.position.copy(home);
-    this.flowGraph.group.quaternion.copy(this.camera.quaternion);
-    this.content.add(this.flowGraph.group);
-    this.flowLabels = new FlowNodeLabels(neuron, this.flowGraph, (nodeId) => this.selectNode(nodeId));
+    let dist = 26;
+    if (isAbility) {
+      // Abilities have no inner graph — spotlight the star where it lives,
+      // galaxy clouds and section names stay up.
+      this.bloomTarget = BLOOM_OVERVIEW;
+      setNebulaeDim(this.nebulae, 1);
+      this.labels?.setHidden(false);
+    } else {
+      this.bloomTarget = BLOOM_FOCUS;
+      // Clear the stage: galaxy clouds and section names recede behind the graph.
+      setNebulaeDim(this.nebulae, 0.12);
+      this.labels?.setHidden(true);
+
+      // Replace the glowing star with the behaviour's actual graph, oriented
+      // toward the camera, then fly in to frame it head-on.
+      this.flowGraph = new FlowGraph(neuron, this.graph.servers);
+      this.flowGraph.group.position.copy(home);
+      this.flowGraph.group.quaternion.copy(this.camera.quaternion);
+      this.content.add(this.flowGraph.group);
+      this.flowLabels = new FlowNodeLabels(neuron, this.flowGraph, (nodeId) => this.selectNode(nodeId), this.msgCounts());
+
+      const halfV = Math.tan((FOV * Math.PI) / 360);
+      dist = Math.max(
+        (this.flowGraph.halfHeight * 1.25) / halfV,
+        (this.flowGraph.halfWidth * 1.25) / (halfV * this.camera.aspect),
+        10,
+      );
+    }
 
     this.targetLookAt.copy(home);
-    const halfV = Math.tan((FOV * Math.PI) / 360);
-    const dist = Math.max(
-      (this.flowGraph.halfHeight * 1.25) / halfV,
-      (this.flowGraph.halfWidth * 1.25) / (halfV * this.camera.aspect),
-      10,
-    );
     const normal = new Vector3(0, 0, 1).applyQuaternion(this.camera.quaternion);
     this.camGoal = home.clone().addScaledVector(normal, dist);
     this.focusLerp = 0;
@@ -407,7 +422,29 @@ export class Brain {
     const node = neuron.inner.nodes.find((n) => n.id === nodeId);
     if (!node) return;
     const target = node.subflowId ? this.graph.neurons.find((n) => n.id === node.subflowId) ?? null : null;
-    this.hud.showNodePanel(neuron, node, this.graph.servers, target);
+    this.hud.showNodePanel(neuron, node, this.graph.servers, target, this.convByNode.get(nodeId) ?? []);
+  }
+
+  /** The chat dock's conversation changed — refresh the per-node overlay. */
+  setConversation(msgs: NodeChatMessage[]): void {
+    this.convByNode.clear();
+    for (const m of msgs) {
+      if (!this.convByNode.has(m.nodeId)) this.convByNode.set(m.nodeId, []);
+      this.convByNode.get(m.nodeId)!.push(m);
+    }
+    // Focused graph open: rebuild the labels so 💬 badges stay current.
+    const neuron = this.focusedNeuron();
+    if (this.flowGraph && neuron) {
+      this.flowLabels?.dispose();
+      this.flowLabels = new FlowNodeLabels(neuron, this.flowGraph, (nodeId) => this.selectNode(nodeId), this.msgCounts());
+      if (this.selectedNodeId) this.selectNode(this.selectedNodeId);
+    }
+  }
+
+  private msgCounts(): Map<string, number> {
+    const counts = new Map<string, number>();
+    for (const [id, msgs] of this.convByNode) counts.set(id, msgs.length);
+    return counts;
   }
 
   private clearFocus(): void {
@@ -461,10 +498,16 @@ export class Brain {
       case 'node-exit':
         // Keep the highlight until the next node lights up.
         break;
-      case 'tool-call':
+      case 'tool-call': {
         this.touchFlow(e.conversationId, e.flowId);
+        const ability = abilityForTool(this.graph, e.toolName);
+        if (ability) {
+          this.glow.set(ability.id, 1);
+          if (e.flowId) this.synapses.flash(e.flowId, ability.id);
+        }
         this.hudActivity = { flowId: e.flowId, detail: e.toolName ? `tool ${e.toolName}` : undefined };
         break;
+      }
       case 'message':
         this.touchFlow(e.conversationId, e.flowId);
         if (e.text) {
@@ -526,8 +569,8 @@ export class Brain {
       }
     }
     // The focused behaviour's star is hidden behind its flow graph — don't
-    // let its wake glow bleed through.
-    if (this.focusId && this.glow.has(this.focusId)) {
+    // let its wake glow bleed through. (A focused ability keeps its star.)
+    if (this.focusId && this.flowGraph && this.glow.has(this.focusId)) {
       const masked = new Map(this.glow);
       masked.delete(this.focusId);
       this.stars.setBoost(masked);
@@ -595,7 +638,7 @@ export class Brain {
     if (id) {
       const n = this.graph.neurons.find((x) => x.id === id)!;
       this.hud.showTooltip(
-        `${n.name} · ${n.nodeTotal} nodes`,
+        n.kind === 'ability' ? `${n.name} · ability · ${this.graph.servers[n.name] ?? 'unknown'}` : `${n.name} · ${n.nodeTotal} nodes`,
         (this.pointer.x * 0.5 + 0.5) * window.innerWidth,
         (-this.pointer.y * 0.5 + 0.5) * window.innerHeight,
       );
@@ -662,7 +705,10 @@ export class Brain {
       active = this.activeEdgesFor(visible, true);
     }
 
-    this.stars.spotlight(visible, focus, this.focusId !== null);
-    this.synapses.recolor(active, this.kindsEnabled, this.focusId !== null);
+    // A focused ability has no flow graph — treat it like a bright hover
+    // instead of hiding the star and receding the web.
+    const graphOpen = this.flowGraph !== null;
+    this.stars.spotlight(visible, focus, graphOpen);
+    this.synapses.recolor(active, this.kindsEnabled, graphOpen);
   }
 }

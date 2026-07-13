@@ -1,4 +1,4 @@
-import type { BrainGraph, Neuron } from '../types';
+import type { BrainGraph, Neuron, NodeChatMessage } from '../types';
 import { flujoBase } from '../data/loader';
 import { PauseController } from '../data/pause';
 
@@ -46,6 +46,52 @@ interface PlannedExecutions {
 const MAX_TOOL_ROUNDS = 8;
 const STEM_RE = /brain.?stem/i;
 const CHAT_HIDDEN_KEY = 'brain-chat-hidden';
+const CHAT_EXPANDED_KEY = 'brain-chat-expanded';
+const CHAT_CONV_KEY = 'brain-chat-conversation';
+
+/**
+ * Intent pills: the user picks what a message is for, and the turn is scoped
+ * to the matching slice of the brain-stem's tool belt (list/perform/learn/
+ * forget behaviours; list/use/learn/forget skills — hosted by the manager).
+ *
+ * The belt lives server-side (MCP nodes baked into the flow) and FLUJO has no
+ * per-request tool filter for flow runs — client `tools` are ignored on the
+ * flow path entirely. So scoping is done by instruction: a preamble names the
+ * allowed verbs (and the concrete behaviours/skills in scope), which also
+ * keeps the model from wandering through the whole belt.
+ */
+type Intent = 'use-behaviour' | 'learn-behaviour' | 'use-skill' | 'learn-skill';
+
+interface IntentCtx {
+  behaviours: string[];
+  skills: string[];
+}
+
+const INTENTS: Record<Intent, (ctx: IntentCtx) => string> = {
+  'use-behaviour': ({ behaviours }) =>
+    'INTENT: perform an existing behaviour for the task below. Allowed tools: perform_behaviour (and ' +
+    'list_behaviours to inspect). Do not learn, forget, or touch skills this turn.' +
+    (behaviours.length ? ` Behaviours in scope: ${behaviours.join(', ')}.` : ''),
+  'learn-behaviour': () =>
+    'INTENT: learn a NEW behaviour for the task below. Allowed tools: list_behaviours and learn_behaviour. ' +
+    'Do not perform existing behaviours and do not touch skills this turn.',
+  'use-skill': ({ skills }) =>
+    'INTENT: use an installed skill (MCP server) for the task below. Allowed tools: list_skills (pass name to ' +
+    'see a skill\'s tools) and use_skill to call one. If use_skill is not in your belt, say so and name the ' +
+    'behaviour that binds the skill instead. Do not learn or forget anything this turn.' +
+    (skills.length ? ` Skills installed: ${skills.join(', ')}.` : ''),
+  'learn-skill': () =>
+    'INTENT: learn a NEW skill for the task below. Allowed tools: list_skills (its search reaches the MCP ' +
+    'registry) and learn_skill to install it. Do not create behaviours this turn.',
+};
+
+/** Intents that still attach the behaviours as client-side tools. */
+const INTENT_BEHAVIOUR_TOOLS: Record<Intent, boolean> = {
+  'use-behaviour': true,
+  'learn-behaviour': false,
+  'use-skill': false,
+  'learn-skill': false,
+};
 
 /** Wake prompt for the heartbeat (mirrors manager/src/brainstem.ts). */
 const WAKE_PROMPT =
@@ -69,6 +115,55 @@ function esc(s: string): string {
   return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 }
 
+/** A conversation as FLUJO lists / returns it (persisted on its disk). */
+interface StoredConvItem {
+  id: string;
+  title?: string;
+  flowId?: string | null;
+  createdAt?: number;
+  updatedAt?: number;
+  status?: string;
+}
+
+interface StoredConvMessage {
+  role?: string;
+  content?: unknown;
+  tool_calls?: ToolCall[];
+  tool_call_id?: string;
+  processNodeId?: string;
+}
+
+/** Flatten OpenAI-style content (string or text-part array) to plain text. */
+function flattenContent(content: unknown): string | null {
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    const t = content
+      .map((p) => (p && typeof p === 'object' && (p as { type?: string }).type === 'text' ? (p as { text?: string }).text ?? '' : ''))
+      .join('');
+    return t || null;
+  }
+  return null;
+}
+
+/** Hide the intent preamble in displayed user bubbles (it stays on the wire). */
+function stripIntentPreamble(s: string): string {
+  if (!s.startsWith('INTENT:')) return s;
+  const i = s.indexOf('\n\nTASK:\n');
+  return i >= 0 ? s.slice(i + 8) : s;
+}
+
+/** "12s ago" / "3m ago" / "2h ago" / "5d ago" for the history list. */
+function relTime(ms: number): string {
+  const s = Math.round((Date.now() - ms) / 1000);
+  if (!Number.isFinite(s) || s < 0) return '';
+  if (s < 60) return `${s}s ago`;
+  const m = Math.round(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.round(m / 60);
+  if (h < 48) return `${h}h ago`;
+  return `${Math.round(h / 24)}d ago`;
+}
+
 /** OpenAI tool names must be [a-zA-Z0-9_-]{1,64}. */
 function toolName(flowName: string): string {
   return flowName.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 64) || 'behaviour';
@@ -82,6 +177,7 @@ export class AiDock {
   private sendBtn = this.$<HTMLButtonElement>('ai-send');
   private pauseBtn = this.$<HTMLButtonElement>('pause-btn');
   private openBtn = this.$<HTMLButtonElement>('ai-open');
+  private expandBtn = this.$<HTMLButtonElement>('ai-expand');
   private setup = this.$('ai-setup');
   private title = this.$('ai-title');
 
@@ -94,8 +190,17 @@ export class AiDock {
 
   private conversationId: string | null = null;
   private messages: ChatMessage[] = [];
-  private queue: Array<{ text: string; el: HTMLElement }> = [];
+  private queue: Array<{ text: string; el: HTMLElement; intent: Intent | null }> = [];
   private busy = false;
+  /** The armed intent pill; applies to the next message sent. */
+  private intent: Intent | null = null;
+  /** Stem id whose stored conversation was already restored (once per stem). */
+  private restoredFor: string | null = null;
+  private historyOpen = false;
+
+  /** Fires whenever the current conversation's content changes — feeds the
+   *  per-neuron overlay (message badges on the focused flow graph). */
+  onConversation: (msgs: NodeChatMessage[]) => void = () => {};
 
   /** Dock revealed once FLUJO first answered. */
   private started = false;
@@ -121,18 +226,61 @@ export class AiDock {
       this.setDockHidden(false);
       this.input.focus();
     });
+    this.expandBtn.addEventListener('click', () => {
+      this.setExpanded(!this.dock.classList.contains('expanded'));
+      this.input.focus();
+    });
+    this.setExpanded(localStorage.getItem(CHAT_EXPANDED_KEY) === '1');
+
+    // Intent pills: click arms one and disables the rest; click again disarms.
+    this.$('ai-intents')
+      .querySelectorAll<HTMLButtonElement>('.ai-intent')
+      .forEach((btn) => {
+        btn.addEventListener('click', () => {
+          this.setIntent(this.intent === btn.dataset.intent ? null : (btn.dataset.intent as Intent));
+          this.input.focus();
+        });
+      });
+
+    this.$('ai-history').addEventListener('click', () => void this.toggleHistory());
+  }
+
+  private setIntent(intent: Intent | null): void {
+    this.intent = intent;
+    this.$('ai-intents')
+      .querySelectorAll<HTMLButtonElement>('.ai-intent')
+      .forEach((btn) => {
+        const mine = btn.dataset.intent === intent;
+        btn.classList.toggle('active', mine);
+        btn.disabled = intent !== null && !mine;
+      });
+  }
+
+  private setExpanded(expanded: boolean): void {
+    localStorage.setItem(CHAT_EXPANDED_KEY, expanded ? '1' : '0');
+    this.dock.classList.toggle('expanded', expanded);
+    this.expandBtn.textContent = expanded ? '⤡' : '⛶';
+    this.expandBtn.title = expanded ? 'shrink' : 'expand';
+    this.expandBtn.setAttribute('aria-label', expanded ? 'shrink chat' : 'expand chat');
+    this.log.scrollTop = this.log.scrollHeight;
   }
 
   /** Called whenever the brain graph (re)builds. */
   setGraph(graph: BrainGraph): void {
     this.graph = graph;
-    const stem = graph.neurons.find((n) => STEM_RE.test(n.name)) ?? null;
+    const stem = graph.neurons.find((n) => n.kind !== 'ability' && STEM_RE.test(n.name)) ?? null;
     if (stem?.id !== this.stem?.id) {
       // A new interlocutor means a new conversation.
       this.conversationId = null;
       this.messages = [];
     }
     this.stem = stem;
+    // Conversations live in FLUJO (on disk) — pick the one this browser last
+    // used back up after a reload.
+    if (stem && this.restoredFor !== stem.id) {
+      this.restoredFor = stem.id;
+      void this.restoreConversation();
+    }
     this.title.textContent = stem ? `talk to ${stem.name}` : 'talk to the brain';
     this.input.disabled = !stem;
     this.sendBtn.disabled = !stem;
@@ -152,6 +300,160 @@ export class AiDock {
     localStorage.setItem(CHAT_HIDDEN_KEY, hidden ? '1' : '0');
     this.dock.classList.toggle('hidden', hidden);
     this.openBtn.classList.toggle('hidden', !hidden);
+  }
+
+  // ---- stored conversations (they live in FLUJO, on disk) -------------------
+
+  private convKey(): string | null {
+    return this.stem ? `${CHAT_CONV_KEY}:${this.stem.id}` : null;
+  }
+
+  /** Open a stored conversation in the dock (e.g. from the heartbeat bar). */
+  openConversation(id: string): void {
+    this.setDockHidden(false);
+    void this.loadConversation(id).then((ok) => {
+      if (!ok) this.note('⚠ could not load that conversation', 'err');
+    });
+  }
+
+  /** The label of a brain-stem node, for per-time node tags. */
+  private nodeLabel(nodeId: string | undefined): string | null {
+    if (!nodeId) return null;
+    return this.stem?.inner.nodes.find((n) => n.id === nodeId)?.label ?? null;
+  }
+
+  /** Current conversation as node-pinned messages (per-neuron overlay). */
+  private emitConversation(): void {
+    const msgs: NodeChatMessage[] = [];
+    for (const m of this.messages) {
+      if ((m.role !== 'user' && m.role !== 'assistant') || !m.processNodeId) continue;
+      const text = m.content?.trim();
+      if (!text) continue;
+      msgs.push({ role: m.role, text: m.role === 'user' ? stripIntentPreamble(text) : text, nodeId: m.processNodeId });
+    }
+    this.onConversation(msgs);
+  }
+
+  /** Reload the conversation this browser last talked in (after a reload). */
+  private async restoreConversation(): Promise<void> {
+    const key = this.convKey();
+    const id = key ? localStorage.getItem(key) : null;
+    if (!id) return;
+    const ok = await this.loadConversation(id, true);
+    if (!ok && key) localStorage.removeItem(key);
+  }
+
+  /** Adopt a stored conversation: full transcript + context for follow-ups. */
+  private async loadConversation(id: string, silent = false): Promise<boolean> {
+    const base = flujoBase();
+    if (!base || !this.stem) return false;
+    try {
+      const res = await fetch(`${base}/v1/chat/conversations/${encodeURIComponent(id)}`);
+      if (!res.ok) return false;
+      const conv = (await res.json()) as { flowId?: string | null; messages?: StoredConvMessage[] };
+      if (conv.flowId && conv.flowId !== this.stem.id) return false;
+      this.conversationId = id;
+      this.messages = (Array.isArray(conv.messages) ? conv.messages : [])
+        .filter((m) => m.role === 'user' || m.role === 'assistant' || m.role === 'tool')
+        .map((m) => ({
+          role: m.role as ChatMessage['role'],
+          content: flattenContent(m.content),
+          ...(m.tool_calls?.length ? { tool_calls: m.tool_calls } : {}),
+          ...(m.tool_call_id ? { tool_call_id: m.tool_call_id } : {}),
+          ...(m.processNodeId ? { processNodeId: m.processNodeId } : {}),
+        }));
+      const key = this.convKey();
+      if (key) localStorage.setItem(key, id);
+      this.renderTranscript();
+      this.emitConversation();
+      if (!silent) this.note('conversation restored from FLUJO.');
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /** Redraw the whole log from this.messages (restore / conversation switch). */
+  private renderTranscript(): void {
+    this.log.innerHTML = '';
+    for (const m of this.messages) {
+      if (m.role === 'user' && m.content) {
+        this.bubble('user', esc(stripIntentPreamble(m.content)));
+      } else if (m.role === 'assistant') {
+        const names = (m.tool_calls ?? []).map((c) => c.function?.name).filter(Boolean);
+        if (names.length) this.note(`→ used ${names.join(', ')}`, 'tool');
+        if (m.content?.trim()) {
+          const at = this.nodeLabel(m.processNodeId);
+          this.bubble('ai', (at ? `<span class="ntag">at ${esc(at)}</span>` : '') + esc(m.content.trim()));
+        }
+      }
+    }
+    this.log.scrollTop = this.log.scrollHeight;
+  }
+
+  private newConversation(): void {
+    this.conversationId = null;
+    this.messages = [];
+    this.log.innerHTML = '';
+    const key = this.convKey();
+    if (key) localStorage.removeItem(key);
+    this.emitConversation();
+    this.note('new conversation — nothing said yet.');
+  }
+
+  private async toggleHistory(): Promise<void> {
+    this.historyOpen = !this.historyOpen;
+    const box = this.$('ai-convs');
+    box.classList.toggle('hidden', !this.historyOpen);
+    if (this.historyOpen) await this.renderHistoryList();
+  }
+
+  private async renderHistoryList(): Promise<void> {
+    const box = this.$('ai-convs');
+    box.innerHTML = '<div class="empty">loading…</div>';
+    const base = flujoBase();
+    if (!base || !this.stem) {
+      box.innerHTML = '<div class="empty">FLUJO (or the brain-stem) is not reachable.</div>';
+      return;
+    }
+    try {
+      const res = await fetch(`${base}/v1/chat/conversations`);
+      if (!res.ok) throw new Error(`${res.status}`);
+      const list = (await res.json()) as StoredConvItem[];
+      const mine = (Array.isArray(list) ? list : [])
+        .filter((c) => c?.id && c.flowId === this.stem!.id)
+        .sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0));
+      const item = (c: StoredConvItem) => {
+        // FLUJO stores no source marker; heartbeat runs are recognizable by
+        // their wake-prompt-derived title.
+        const heartbeat = /^wake up\b/i.test(c.title ?? '');
+        const st = c.status ?? '';
+        return (
+          `<button class="conv${c.id === this.conversationId ? ' current' : ''}" data-id="${esc(c.id)}">` +
+          `<span class="t">${heartbeat ? '💓 ' : ''}${esc(c.title || 'untitled')}</span>` +
+          `<span class="st${st === 'running' ? ' running' : ''}">${esc(st)}</span>` +
+          `<span class="when">${c.updatedAt ? relTime(c.updatedAt) : ''}</span></button>`
+        );
+      };
+      box.innerHTML =
+        '<button class="conv new" data-id="">＋ new conversation</button>' +
+        (mine.length ? mine.map(item).join('') : '<div class="empty">no stored conversations for this brain yet.</div>');
+      box.querySelectorAll<HTMLButtonElement>('.conv').forEach((el) => {
+        el.addEventListener('click', () => {
+          this.historyOpen = false;
+          box.classList.add('hidden');
+          const id = el.dataset.id;
+          if (!id) this.newConversation();
+          else {
+            void this.loadConversation(id).then((ok) => {
+              if (!ok) this.note('⚠ could not load that conversation', 'err');
+            });
+          }
+        });
+      });
+    } catch {
+      box.innerHTML = '<div class="empty">could not list conversations.</div>';
+    }
   }
 
   // ---- pause / resume -------------------------------------------------------
@@ -360,20 +662,20 @@ export class AiDock {
     btn.disabled = true;
     btn.textContent = '… growing';
     try {
-      // The manager adopts by URL; the same-origin /flujo proxy maps to its
-      // default instance.
-      const adoptUrl = base.startsWith('http') ? base : 'default';
-      const res = await fetch('/api/brains', {
+      // Viewed through a per-brain proxy, the instance is already registered —
+      // grow into that record. Otherwise the manager adopts by URL (the
+      // same-origin /flujo proxy maps to its default instance).
+      const proxied = base.match(/^\/brains\/([^/]+)\/flujo\/?$/);
+      const res = await fetch(proxied ? `/api/brains/${proxied[1]}/grow` : '/api/brains', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          // No name — the manager generates a friendly one.
+          // No name — the manager generates (or already has) a friendly one.
           lifeGoal,
           model: { mode: 'existing', id: modelId },
-          adoptUrl,
+          ...(proxied ? {} : { adoptUrl: base.startsWith('http') ? base : 'default', wake: false }),
           heartbeat,
           heartbeatCron: cron,
-          wake: false,
         }),
       });
       const created = (await res.json().catch(() => ({}))) as { id?: string; error?: string };
@@ -408,14 +710,17 @@ export class AiDock {
 
   // ---- tools ----------------------------------------------------------------
 
-  /** Every behaviour except the brain-stem, minus what the user switched off. */
+  /** Every behaviour except the brain-stem, minus what the user switched off.
+   *  Ability neurons (MCP servers) are viz-only — they cannot run as flows. */
   private enabledTools(): Neuron[] {
-    return (this.graph?.neurons ?? []).filter((n) => n.id !== this.stem?.id && !this.disabledTools.has(n.id));
+    return (this.graph?.neurons ?? []).filter(
+      (n) => n.kind !== 'ability' && n.id !== this.stem?.id && !this.disabledTools.has(n.id),
+    );
   }
 
   private renderTools(): void {
     const box = this.$('ai-tools');
-    const neurons = (this.graph?.neurons ?? []).filter((n) => n.id !== this.stem?.id);
+    const neurons = (this.graph?.neurons ?? []).filter((n) => n.kind !== 'ability' && n.id !== this.stem?.id);
     box.innerHTML = neurons
       .map(
         (n) =>
@@ -459,28 +764,32 @@ export class AiDock {
     const text = this.input.value.trim();
     if (!text || !this.stem) return;
     this.input.value = '';
-    const el = this.bubble(this.busy ? 'user queued' : 'user', esc(text));
+    const intent = this.intent;
+    this.setIntent(null); // one-shot: a pill arms exactly one message
+    const tag = intent ? `<span class="itag">${intent.replace('-', ' ')}</span>` : '';
+    const el = this.bubble(this.busy ? 'user queued' : 'user', tag + esc(text));
     if (this.busy) {
-      this.queue.push({ text, el });
+      this.queue.push({ text, el, intent });
       return;
     }
-    void this.run(text);
+    void this.run(text, intent);
   }
 
-  private async run(text: string): Promise<void> {
+  private async run(text: string, intent: Intent | null): Promise<void> {
     this.busy = true;
     this.sendBtn.classList.add('busy');
     try {
-      await this.turn(text);
+      await this.turn(text, intent);
     } catch (e) {
       this.note(`⚠ ${e instanceof Error ? e.message : 'request failed'}`, 'err');
     } finally {
+      this.emitConversation();
       this.busy = false;
       this.sendBtn.classList.remove('busy');
       const next = this.queue.shift();
       if (next) {
         next.el.classList.remove('queued');
-        void this.run(next.text);
+        void this.run(next.text, next.intent);
       }
     }
   }
@@ -496,10 +805,21 @@ export class AiDock {
   }
 
   /** One user turn: completion + as many tool rounds as the model asks for. */
-  private async turn(text: string): Promise<void> {
+  private async turn(text: string, intent: Intent | null = null): Promise<void> {
     const base = flujoBase();
     const target = this.stem;
     if (!base || !target) throw new Error('FLUJO is not reachable');
+
+    // An armed intent travels inside the user message (FLUJO strips client
+    // system messages in flow mode, and has no per-request tool scoping —
+    // the belt is narrowed by instruction).
+    const ctx: IntentCtx = {
+      behaviours: this.enabledTools().map((n) => n.name),
+      skills: Object.entries(this.graph?.servers ?? {})
+        .filter(([, s]) => s !== 'disabled')
+        .map(([name]) => name),
+    };
+    const content = intent ? `${INTENTS[intent](ctx)}\n\nTASK:\n${text}` : text;
 
     // FLUJO parks a finished conversation on its Finish node; a follow-up
     // user message must point execution back at a thinking node or the
@@ -507,11 +827,15 @@ export class AiDock {
     // (Mirrors FLUJO's own chat UI, which tags every follow-up this way.)
     this.messages.push({
       role: 'user',
-      content: text,
+      content,
       ...(this.conversationId ? { processNodeId: this.resumeNodeId() } : {}),
     });
 
-    const tools = this.enabledTools();
+    // Reduced context: behaviours are only offered as client-side tools when
+    // the intent calls for performing behaviours (or no intent is armed).
+    // (FLUJO's flow path currently ignores client tools — kept as a harmless
+    // fallback; the intent preamble does the real scoping.)
+    const tools = !intent || INTENT_BEHAVIOUR_TOOLS[intent] ? this.enabledTools() : [];
     const nameToFlow = new Map<string, Neuron>();
     const toolDefs = tools.map((n) => {
       let name = toolName(n.name);
@@ -544,6 +868,10 @@ export class AiDock {
           ...(this.conversationId ? { metadata: { conversationId: this.conversationId } } : {}),
         });
         this.conversationId = res.conversation_id ?? this.conversationId;
+        // Remember where this browser talks, so a reload lands back here
+        // (the conversation itself is persisted by FLUJO).
+        const key = this.convKey();
+        if (key && this.conversationId) localStorage.setItem(key, this.conversationId);
         const choice = res.choices?.[0];
         const msg = choice?.message;
         if (!msg) throw new Error(typeof res.error === 'string' ? res.error : res.error?.message ?? 'empty response');
@@ -568,7 +896,10 @@ export class AiDock {
           continue;
         }
 
-        if (msg.content?.trim()) this.bubble('ai', esc(msg.content.trim()));
+        if (msg.content?.trim()) {
+          const at = this.nodeLabel(msg.processNodeId);
+          this.bubble('ai', (at ? `<span class="ntag">at ${esc(at)}</span>` : '') + esc(msg.content.trim()));
+        }
         return;
       }
       this.note('⚠ stopped after too many tool rounds', 'err');

@@ -4,6 +4,10 @@ import { PROVIDER_COLORS, providerLabel } from './theme';
 
 export type GroupMode = 'provider' | 'folder' | 'model';
 
+/** Ability (MCP server) neurons cluster in their own section in every mode. */
+export const ABILITY_GROUP = '~abilities';
+const ABILITY_COLOR = 0x4d8df6; // matches the mcp/server blue in the theme
+
 export interface Group {
   id: string;
   label: string;
@@ -19,6 +23,7 @@ export interface Grouping {
 }
 
 function keyFor(n: Neuron, mode: GroupMode): { key: string; label: string } {
+  if (n.kind === 'ability') return { key: ABILITY_GROUP, label: 'Abilities' };
   if (mode === 'folder') {
     const f = n.folder?.trim();
     return { key: f || '~ungrouped', label: f || 'Ungrouped' };
@@ -55,7 +60,9 @@ export function groupNeurons(neurons: Neuron[], mode: GroupMode): Grouping {
   // Assign colours: providers get their brand hue, everything else a palette hue.
   order.forEach((key, i) => {
     const g = map.get(key)!;
-    if (mode === 'provider' && PROVIDER_COLORS[key] !== undefined) {
+    if (key === ABILITY_GROUP) {
+      g.color = new Color(ABILITY_COLOR);
+    } else if (mode === 'provider' && PROVIDER_COLORS[key] !== undefined) {
       g.color = new Color(PROVIDER_COLORS[key]);
     } else {
       g.color = paletteColor(i);

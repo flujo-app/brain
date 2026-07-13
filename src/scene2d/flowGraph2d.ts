@@ -54,6 +54,8 @@ export class FlowGraph2D {
   private hoverId: string | null = null;
   private selectedId: string | null = null;
   private activeId: string | null = null;
+  /** nodeId -> message count from the chat dock's conversation (💬 badges). */
+  private badges = new Map<string, number>();
 
   constructor(neuron: Neuron, servers: Record<string, ServerStatus>, cx: number, cy: number) {
     const inner = neuron.inner.nodes;
@@ -125,6 +127,11 @@ export class FlowGraph2D {
     if (id === this.activeId) return false;
     this.activeId = id;
     return true;
+  }
+
+  /** Per-node message counts (the chat conversation overlaid on the graph). */
+  setBadges(counts: Map<string, number>): void {
+    this.badges = counts;
   }
 
   /** Node id at screen point (disc or its name pill), or null. */
@@ -253,6 +260,32 @@ export class FlowGraph2D {
       ctx.fillText(n.label, x1 + padX + tw + gap, top + h / 2 + 0.5);
 
       this.labelRects.set(n.id, { x1, y1: top, x2: x1 + w, y2: top + h });
+    }
+
+    // 💬 badges: how much of the chat conversation happened at each node.
+    for (const n of this.nodes) {
+      const count = this.badges.get(n.id);
+      if (!count) continue;
+      const [x, y] = w2s(n.x, n.y);
+      const label = `💬 ${count}`;
+      ctx.font = '600 10px Inter, "Segoe UI", system-ui, sans-serif';
+      const tw = ctx.measureText(label).width;
+      const bw = tw + 12;
+      const bh = 16;
+      const bx = x + NODE_R * 0.8 * s;
+      const by = y - NODE_R * 1.3 * s - bh;
+      ctx.globalAlpha = alpha;
+      ctx.beginPath();
+      ctx.roundRect(bx, by, bw, bh, 8);
+      ctx.fillStyle = 'rgba(10,14,28,0.85)';
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(245,158,11,0.5)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      ctx.textBaseline = 'middle';
+      ctx.textAlign = 'left';
+      ctx.fillStyle = '#dbe4ff';
+      ctx.fillText(label, bx + 6, by + bh / 2 + 0.5);
     }
     ctx.globalAlpha = 1;
   }

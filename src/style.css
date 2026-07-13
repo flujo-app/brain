@@ -337,11 +337,75 @@ body.reading #legend { display: none; }
   font-size: 10px; text-transform: uppercase; letter-spacing: 0.14em;
   color: var(--subflow);
 }
-#ai-close {
+#ai-dock header .ai-hdr-btns { display: flex; align-items: center; gap: 8px; }
+#ai-close, #ai-expand, #ai-history {
   background: none; border: none; color: var(--muted);
   font-size: 20px; line-height: 1; cursor: pointer; padding: 0 2px;
 }
-#ai-close:hover { color: var(--fg); }
+#ai-expand { font-size: 15px; }
+#ai-history { font-size: 14px; }
+#ai-close:hover, #ai-expand:hover, #ai-history:hover { color: var(--fg); }
+
+/* Intent pills: pick what this message is for; the turn gets only those tools */
+#ai-intents {
+  display: flex; flex-wrap: wrap; gap: 8px;
+  padding: 0 14px 10px; flex-shrink: 0;
+}
+.ai-intent {
+  flex: 1 1 auto;
+  padding: 9px 14px; border-radius: 999px;
+  border: 1px solid rgba(245,158,11,0.4); background: rgba(245,158,11,0.08);
+  color: var(--fg); font: inherit; font-size: 12px; font-weight: 600;
+  cursor: pointer; white-space: nowrap;
+  transition: background 0.15s, opacity 0.15s, box-shadow 0.15s;
+}
+.ai-intent:hover:not(:disabled) { background: rgba(245,158,11,0.22); }
+.ai-intent.active {
+  background: rgba(245,158,11,0.3); border-color: rgba(245,158,11,0.9);
+  box-shadow: 0 0 18px rgba(245,158,11,0.25);
+}
+.ai-intent:disabled { opacity: 0.28; cursor: default; }
+#ai-dock.expanded .ai-intent { font-size: 15px; padding: 14px 22px; }
+#ai-dock.expanded #ai-intents { gap: 12px; padding-bottom: 14px; }
+
+/* Stored conversations (lives in FLUJO, survives reloads) */
+#ai-convs {
+  margin: 0 14px 8px; padding: 8px;
+  border: 1px solid var(--border); border-radius: 12px;
+  background: rgba(0,0,0,0.25);
+  max-height: 200px; overflow-y: auto; flex-shrink: 0;
+  display: flex; flex-direction: column; gap: 4px;
+}
+#ai-convs .conv {
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 10px; border-radius: 9px; border: 1px solid transparent;
+  background: none; color: var(--fg); font: inherit; font-size: 12px;
+  cursor: pointer; text-align: left; width: 100%;
+}
+#ai-convs .conv:hover { background: rgba(255,255,255,0.05); }
+#ai-convs .conv.current { border-color: rgba(245,158,11,0.5); background: rgba(245,158,11,0.08); }
+#ai-convs .conv .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#ai-convs .conv .when { color: var(--muted); font-size: 10.5px; flex-shrink: 0; }
+#ai-convs .conv .st { font-size: 10px; flex-shrink: 0; color: var(--muted); }
+#ai-convs .conv .st.running { color: #4ade80; }
+#ai-convs .empty { color: var(--muted); font-size: 11.5px; padding: 4px 10px; }
+#ai-convs .conv.new { color: var(--subflow); font-weight: 600; }
+
+/* Fullscreen conversation */
+#ai-dock.expanded {
+  right: 0; left: 0; top: 0; bottom: 0;
+  width: auto; max-width: none; max-height: none;
+  margin: 0;
+  border-radius: 0;
+  border: none;
+}
+#ai-dock.expanded #ai-log .msg { font-size: 14px; }
+#ai-dock.expanded #ai-log,
+#ai-dock.expanded .ai-inputrow,
+#ai-dock.expanded #ai-intents {
+  width: min(900px, 100%);
+  margin-left: auto; margin-right: auto;
+}
 
 /* Reopen chip once the dock is minimized */
 #ai-open {
@@ -425,6 +489,13 @@ body.reading #legend { display: none; }
   background: rgba(125,123,255,0.18); border: 1px solid rgba(125,123,255,0.4);
 }
 #ai-log .msg.user.queued { opacity: 0.45; border-style: dashed; }
+#ai-log .msg .itag,
+#ai-log .msg .ntag {
+  display: block; margin-bottom: 3px;
+  font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.1em;
+  color: var(--subflow);
+}
+#ai-log .msg .ntag { color: var(--muted); }
 #ai-log .msg.ai {
   align-self: flex-start;
   background: rgba(255,255,255,0.05); border: 1px solid var(--border);
@@ -461,13 +532,13 @@ body.reading #legend { display: none; }
   #ai-dock { right: 12px; left: 12px; width: auto; }
 }
 
-/* Last heartbeat transcript — top right, overview only */
+/* Heartbeat status bar — top right, overview only. The transcript itself is
+   a stored conversation and opens in the chat dock (💬). */
 #heartbeat {
   right: 22px; top: 84px;
   width: min(340px, calc(100vw - 44px));
-  max-height: min(46vh, 420px);
   display: flex; flex-direction: column;
-  padding: 12px 14px;
+  padding: 10px 14px 11px;
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 16px;
@@ -476,37 +547,37 @@ body.reading #legend { display: none; }
 #heartbeat header {
   position: static;
   display: flex; align-items: baseline; gap: 8px;
-  padding: 0 0 8px;
+  padding: 0 0 6px;
   font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.12em; color: var(--muted);
 }
 #heartbeat .beat { color: #ff5c8a; font-size: 13px; }
 #heartbeat.running .beat { animation: heartbeat 1.1s ease-in-out infinite; display: inline-block; }
 #hb-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #hb-time { margin-left: auto; flex-shrink: 0; text-transform: none; letter-spacing: normal; }
-#hb-msgs { overflow-y: auto; display: flex; flex-direction: column; gap: 7px; }
-.hb-msg {
-  font-size: 12.5px; line-height: 1.45;
-  padding: 7px 11px; border-radius: 11px;
+#hb-open {
+  background: none; border: none; cursor: pointer; padding: 0;
+  font-size: 13px; line-height: 1; flex-shrink: 0;
+  filter: grayscale(0.6); transition: filter 0.15s;
+}
+#hb-open:hover:not(:disabled) { filter: none; }
+#hb-open:disabled { opacity: 0.3; cursor: default; }
+#hb-ecg-row { position: relative; }
+#hb-ecg { display: block; width: 100%; height: 34px; }
+#hb-next {
+  position: absolute; right: 2px; top: 1px;
+  font-size: 10px; color: var(--muted); letter-spacing: 0.04em;
+  text-shadow: 0 0 6px rgba(5,7,15,0.9);
+}
+
+/* "conversation here" bubbles in the node detail panel */
+#p-rels .nmsgs { list-style: none; margin: 0; padding: 4px 0 2px; display: flex; flex-direction: column; gap: 6px; }
+#p-rels .nmsgs .nmsg {
   white-space: pre-wrap; word-break: break-word;
-  /* Long turns collapse to a peek — the full text lives in FLUJO's chat. */
-  max-height: 8.7em; overflow: hidden;
+  font-size: 11.5px; line-height: 1.45;
+  padding: 6px 9px; border-radius: 9px;
 }
-.hb-msg.assistant {
-  color: var(--fg);
-  background: rgba(125, 123, 255, 0.10);
-  border: 1px solid rgba(125, 123, 255, 0.22);
-  border-bottom-left-radius: 4px;
-}
-.hb-msg.user {
-  color: var(--muted);
-  background: rgba(0, 0, 0, 0.25);
-  border: 1px solid var(--border);
-  border-bottom-right-radius: 4px;
-  align-self: flex-end;
-  max-width: 88%;
-  font-size: 11.5px;
-  max-height: 4.4em;
-}
+#p-rels .nmsgs .nmsg.ai { background: rgba(125,123,255,0.1); border: 1px solid rgba(125,123,255,0.22); }
+#p-rels .nmsgs .nmsg.user { background: rgba(0,0,0,0.25); border: 1px solid var(--border); color: var(--muted); }
 
 #hb-tempo {
   display: flex; align-items: center; gap: 9px;
@@ -583,6 +654,43 @@ body.reading #legend { display: none; }
 .flow-label:hover { border-color: var(--c); }
 .flow-label .t { font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; font-weight: 700; }
 .flow-label .l { color: var(--fg); }
+.flow-label .mc {
+  font-size: 9.5px; color: var(--fg);
+  padding: 1px 6px; border-radius: 999px;
+  border: 1px solid rgba(245,158,11,0.5); background: rgba(245,158,11,0.12);
+}
+
+/* History view: one floating name tag per conversation constellation */
+.conv-label {
+  position: absolute; top: 0; left: 0;
+  white-space: nowrap;
+  transition: opacity 0.2s;
+  text-shadow: 0 0 12px rgba(0,0,0,0.9);
+  pointer-events: auto; cursor: pointer;
+  text-align: center;
+  padding: 3px 10px; border-radius: 9px;
+  background: rgba(10, 14, 28, 0.66);
+  border: 1px solid var(--border);
+  backdrop-filter: blur(4px);
+}
+.conv-label:hover { border-color: var(--c); }
+.conv-label .t {
+  display: block;
+  font-size: 12.5px; font-weight: 600; letter-spacing: 0.03em;
+  color: var(--c); filter: brightness(1.35);
+}
+.conv-label .m { display: block; font-size: 10px; color: var(--muted); margin-top: 1px; }
+
+/* History view: centered note while there is nothing to show */
+.hist-empty {
+  position: fixed; left: 50%; top: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 5; pointer-events: none;
+  font-size: 13.5px; color: var(--muted);
+  padding: 10px 18px; border-radius: 12px;
+  background: rgba(10, 14, 28, 0.66);
+  border: 1px solid var(--border);
+}
 
 /* Chat bubbles: the brain speaking, floating over the neuron that said it */
 .bubble-layer { position: fixed; inset: 0; z-index: 6; pointer-events: none; overflow: hidden; }
@@ -627,6 +735,14 @@ body.lobby header, body.lobby section, body.lobby main { position: static; }
   background: rgba(255,92,138,0.08); border: 1px solid rgba(255,92,138,0.35);
 }
 .offline code { background: rgba(255,255,255,0.07); padding: 1px 6px; border-radius: 5px; }
+.notice {
+  padding: 12px 16px; border-radius: 12px; font-size: 13px; margin: 12px 0 0;
+  background: rgba(139,92,246,0.08); border: 1px solid rgba(139,92,246,0.35);
+}
+.wiz-adoptnote {
+  font-size: 12.5px; margin: 10px 0 0; padding: 10px 12px; border-radius: 10px;
+  background: rgba(139,92,246,0.08); border: 1px solid rgba(139,92,246,0.3);
+}
 .error { color: #ff5c8a; font-size: 12.5px; }
 
 .lang-picker {
@@ -755,6 +871,7 @@ body.lobby header, body.lobby section, body.lobby main { position: static; }
 .orbit-card h3 { margin: 0; font-size: 16px; }
 .orbit-card .status { font-size: 11px; color: var(--muted); white-space: nowrap; }
 .orbit-card .status.ready { color: #4ade80; }
+.orbit-card .status.idle { color: #9aa6c8; }
 .orbit-card .status.error { color: #ff5c8a; }
 .orbit-card .status.provisioning { color: var(--subflow); }
 .orbit-card .goal { font-size: 12.5px; color: var(--fg); line-height: 1.5; margin: 8px 0; }
@@ -768,7 +885,31 @@ body.lobby header, body.lobby section, body.lobby main { position: static; }
   font-size: 11px; padding: 4px 10px; border-radius: 999px; cursor: pointer;
 }
 .orbit-card .forget:hover { border-color: rgba(255,92,138,0.6); color: #ff5c8a; }
+.orbit-card .rebuild {
+  background: none; border: 1px solid var(--border); color: var(--muted);
+  font-size: 11px; padding: 4px 10px; border-radius: 999px; cursor: pointer;
+}
+.orbit-card .rebuild:hover { border-color: rgba(125,123,255,0.6); color: #a78bfa; }
 .orbit-hint { text-align: center; color: var(--muted); font-size: 12.5px; margin: 0; }
+
+/* A dormant + : this FLUJO already hosts a brain (adopt-only mode) */
+.orbit-center:disabled {
+  cursor: default;
+  filter: grayscale(0.75) brightness(0.7);
+  animation: none;
+}
+.orbit-center:disabled:hover { transform: none; }
+.orbit-center:disabled::before, .orbit-center:disabled::after { animation: none; opacity: 0; }
+
+/* Connect-to-network entry under the orbit */
+.connect-link {
+  display: block; margin: 10px auto 0;
+  background: none; border: none; cursor: pointer;
+  color: var(--muted); font: inherit; font-size: 12.5px;
+  text-decoration: underline; text-underline-offset: 3px; text-decoration-color: rgba(140,160,220,0.4);
+}
+.connect-link:hover { color: var(--fg); }
+.connect-status { margin: 4px 0 0; font-size: 12.5px; color: var(--muted); min-height: 1.4em; }
 
 /* ---------- lobby: wizard ---------- */
 .wizard-overlay {
@@ -861,6 +1002,29 @@ body.lobby header, body.lobby section, body.lobby main { position: static; }
   background: rgba(74, 222, 128, 0.12); border: 1px solid rgba(74, 222, 128, 0.4); color: #4ade80;
 }
 .wiz-choice .chev { margin-left: auto; color: var(--muted); font-size: 20px; }
+
+/* ---------- wizard: model matrix (cheap↔pricey × simple↔smart) ---------- */
+.wiz-matrix { display: grid; grid-template-columns: auto 1fr; gap: 6px 8px; margin: 0 0 12px; }
+.wiz-axis-y {
+  display: flex; flex-direction: column; justify-content: space-between; align-items: center;
+  font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted);
+}
+.wiz-axis-y span { writing-mode: vertical-rl; transform: rotate(180deg); }
+.wiz-axis-x {
+  grid-column: 2; display: flex; justify-content: space-between;
+  font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted);
+}
+.wiz-matrix-grid {
+  display: grid; grid-template-columns: repeat(3, 1fr);
+  grid-auto-rows: minmax(56px, auto); gap: 6px; min-width: 0;
+}
+.wiz-cell { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.wiz-cell.empty { border: 1px dashed color-mix(in srgb, var(--border) 55%, transparent); border-radius: 10px; }
+.wiz-choice.wiz-cell-pick {
+  flex: 1; flex-direction: column; align-items: center; justify-content: center;
+  text-align: center; gap: 5px; padding: 8px 6px; border-radius: 10px;
+}
+.wiz-cell-pick b { font-size: 12px; font-weight: 600; line-height: 1.3; overflow-wrap: anywhere; }
 
 .wiz-search { margin: 0 0 14px; }
 

@@ -7,7 +7,9 @@ import Docker from 'dockerode';
  * Docker; only managed-brain creation requires it.
  */
 
-const FLUJO_IMAGE = process.env.FLUJO_IMAGE ?? 'ghcr.io/mario-andreschak/flujo:latest';
+// The browser-capable image (FLUJO + headless Chromium + Playwright MCP,
+// see docker/flujo-browser) — brains born from it carry the "browser" skill.
+const FLUJO_IMAGE = process.env.FLUJO_IMAGE ?? 'ghcr.io/mario-andreschak/flujo-browser:latest';
 const NETWORK = process.env.DOCKER_NETWORK ?? 'brain-net';
 
 let docker: Docker | null = null;
@@ -16,6 +18,18 @@ export async function dockerAvailable(): Promise<boolean> {
   try {
     docker ??= new Docker();
     await docker.ping();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** True when the (possibly rebuilt) FLUJO image exists locally — checked
+ *  BEFORE tearing down a container so a rebuild can never strand a brain. */
+export async function flujoImageAvailable(): Promise<boolean> {
+  if (!(await dockerAvailable())) return false;
+  try {
+    await docker!.getImage(FLUJO_IMAGE).inspect();
     return true;
   } catch {
     return false;

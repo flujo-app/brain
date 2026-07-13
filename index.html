@@ -27,6 +27,7 @@
           <select id="view-mode">
             <option value="3d">3D</option>
             <option value="2d">2D</option>
+            <option value="history">🕘 history</option>
           </select>
         </label>
         <label class="group-picker">
@@ -44,7 +45,7 @@
     <aside id="legend">
       <h2>Connections</h2>
       <label class="syn" data-kind="subflow"><span class="swatch"></span> behaviour call <em>toggle</em></label>
-      <label class="syn" data-kind="server"><span class="swatch"></span> shared ability <em>toggle</em></label>
+      <label class="syn" data-kind="server"><span class="swatch"></span> uses ability <em>toggle</em></label>
       <label class="syn" data-kind="model"><span class="swatch"></span> shared model <em>toggle</em></label>
       <h2>Nodes</h2>
       <div class="nodes">
@@ -77,10 +78,14 @@
     <aside id="heartbeat" class="hidden">
       <header>
         <span class="beat">♥</span>
-        <span id="hb-title">last heartbeat</span>
+        <span id="hb-title">heartbeat</span>
         <span id="hb-time"></span>
+        <button id="hb-open" title="open this heartbeat's conversation in the chat">💬</button>
       </header>
-      <div id="hb-msgs"></div>
+      <div id="hb-ecg-row">
+        <canvas id="hb-ecg" width="300" height="34"></canvas>
+        <span id="hb-next"></span>
+      </div>
       <div id="hb-tempo" class="hidden" title="how often the brain wakes">
         <span class="t">tempo</span>
         <input id="hb-tempo-slider" type="range" min="0" max="6" step="1" />
@@ -96,6 +101,7 @@
 
     <footer id="hud-bottom">
       <span id="stat-flows">—</span> behaviours ·
+      <span id="stat-abilities">—</span> abilities ·
       <span id="stat-syn">—</span> connections ·
       <span id="stat-sec">—</span> sections ·
       <span id="stat-hint">click empty space to reset</span>
@@ -104,14 +110,25 @@
     <section id="ai-dock" class="hidden">
       <header>
         <span class="k" id="ai-title">talk to the brain</span>
-        <button id="ai-close" aria-label="hide chat">×</button>
+        <span class="ai-hdr-btns">
+          <button id="ai-history" aria-label="stored conversations" title="stored conversations">🕘</button>
+          <button id="ai-expand" aria-label="expand chat" title="expand">⛶</button>
+          <button id="ai-close" aria-label="hide chat">×</button>
+        </span>
       </header>
       <div id="ai-setup" class="hidden"></div>
       <details class="ai-toolbox">
-        <summary>behaviours it may use as tools <b id="ai-tool-count">0</b></summary>
+        <summary>behaviours in scope for »use behaviour« <b id="ai-tool-count">0</b></summary>
         <div id="ai-tools"></div>
       </details>
+      <div id="ai-convs" class="hidden"></div>
       <div id="ai-log"></div>
+      <div id="ai-intents">
+        <button class="ai-intent" data-intent="use-behaviour">🧠 Use behaviour</button>
+        <button class="ai-intent" data-intent="learn-behaviour">🌱 Learn behaviour</button>
+        <button class="ai-intent" data-intent="use-skill">🔧 Use skill</button>
+        <button class="ai-intent" data-intent="learn-skill">✨ Learn skill</button>
+      </div>
       <div class="ai-inputrow">
         <input id="ai-input" type="text" placeholder="say something… (queues while it thinks)" autocomplete="off" spellcheck="false" />
         <button id="ai-send" aria-label="send">↑</button>

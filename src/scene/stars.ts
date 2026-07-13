@@ -8,13 +8,22 @@ import {
   ShaderMaterial,
   Vector3,
 } from 'three';
-import type { BrainGraph, Neuron } from '../types';
+import type { BrainGraph, Neuron, ServerStatus } from '../types';
 import type { Grouping } from '../grouping';
 import type { SectionedLayout } from '../layout/sectionedLayout';
 import { glowTexture } from './textures';
 
 export function neuronRadius(n: Neuron): number {
+  if (n.kind === 'ability') return 1.15;
   return 0.9 + Math.sqrt(n.nodeTotal) * 0.55;
+}
+
+/** Ability stars break from their group hue when the server isn't healthy. */
+export function abilityTint(status: ServerStatus | undefined): number | null {
+  if (status === 'disconnected') return 0xff5c8a;
+  if (status === 'disabled') return 0x556080;
+  if (status === 'unknown' || status === undefined) return 0x9aa6c8;
+  return null; // connected — keep the abilities-section hue
 }
 
 const VERT = /* glsl */ `
@@ -94,9 +103,15 @@ export class StarField {
 
     graph.neurons.forEach((neuron, ci) => {
       const p = layout.positions.get(neuron.id) ?? new Vector3();
-      const color = (colorOf.get(neuron.id) ?? new Color(0x9aa6c8)).clone();
+      let color = (colorOf.get(neuron.id) ?? new Color(0x9aa6c8)).clone();
       const radius = neuronRadius(neuron);
-      const base = neuron.broken ? 0.4 : 0.95;
+      let base = neuron.broken ? 0.4 : 0.95;
+      if (neuron.kind === 'ability') {
+        const status = graph.servers[neuron.name];
+        const tint = abilityTint(status);
+        if (tint !== null) color = new Color(tint);
+        if (status === 'disabled') base = 0.45;
+      }
 
       this.coreMeta.push({ neuron, color, base });
       this.indexById.set(neuron.id, ci);
