@@ -407,6 +407,8 @@ Write-Ok "Installing into: $InstallDir"
 # Decide whether to create a Desktop shortcut (defaults to yes).
 if ($env:BRAIN_SHORTCUT -in @('0', 'false', 'no')) {
     $makeShortcut = $false
+} elseif ($env:BRAIN_SHORTCUT -in @('1', 'true', 'yes')) {
+    $makeShortcut = $true
 } else {
     $scAnswer = Read-Host "Create a desktop shortcut for brain? (Y/n)"
     $makeShortcut = -not ($scAnswer -match '^\s*(n|no)\s*$')
@@ -417,6 +419,8 @@ $startAfter = $Start.IsPresent
 if (-not $startAfter) {
     if ($env:BRAIN_START -in @('1', 'true', 'yes')) {
         $startAfter = $true
+    } elseif ($env:BRAIN_START -in @('0', 'false', 'no')) {
+        $startAfter = $false
     } else {
         $startAnswer = Read-Host "Start brain when the install finishes? (Y/n)"
         $startAfter = -not ($startAnswer -match '^\s*(n|no)\s*$')

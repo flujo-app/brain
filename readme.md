@@ -155,6 +155,8 @@ curl -fsSL https://raw.githubusercontent.com/flujo-app/brain/main/scripts/instal
 
 The installer asks a handful of questions — Docker or standalone mode, where to install, desktop shortcut, start now? — and from then on, typing `brain` in any terminal brings the whole stack up. Re-running the installer **updates** an existing install. For unattended installs, drive it with environment variables (`BRAIN_MODE=docker|standalone`, `BRAIN_DIR`, `BRAIN_BRANCH`, `BRAIN_START=1`) — see [`scripts/install.ps1`](scripts/install.ps1) / [`scripts/install.sh`](scripts/install.sh).
 
+Prefer a classic **setup.exe**? Grab `brain-setup.exe` from the [latest release](https://github.com/flujo-app/brain/releases/latest) — the same installer wrapped in a graphical wizard: it checks for Git and Docker Desktop (or Node.js), auto-installs whatever is missing, and asks the same questions as wizard pages. Re-running it updates the install too. Built from [`installer/brain-setup.iss`](installer/brain-setup.iss) by CI on every release tag.
+
 ## 🚀 Try it in 30 seconds
 
 Already running FLUJO? No Docker needed — brain is a static site. All it takes is [Node.js](https://nodejs.org) ≥ 20 (and Git for the clone):
