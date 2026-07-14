@@ -38,7 +38,10 @@
             <option value="model">model</option>
           </select>
         </label>
-        <input id="search" type="search" placeholder="search behaviours…" autocomplete="off" spellcheck="false" />
+        <div class="search-box">
+          <input id="search" type="search" placeholder="search behaviours…" autocomplete="off" spellcheck="false" role="combobox" aria-expanded="false" aria-controls="search-results" aria-autocomplete="list" />
+          <ul id="search-results" class="hidden" role="listbox"></ul>
+        </div>
       </div>
     </header>
 
@@ -61,6 +64,7 @@
       <div id="r-kicker"></div>
       <h2 id="r-name"></h2>
       <p id="r-desc"></p>
+      <div id="r-actions"></div>
       <div id="r-prompts"></div>
     </section>
 
@@ -108,33 +112,37 @@
     </footer>
 
     <section id="ai-dock" class="hidden">
-      <header>
-        <span class="k" id="ai-title">talk to the brain</span>
-        <span class="ai-hdr-btns">
-          <button id="ai-history" aria-label="stored conversations" title="stored conversations">🕘</button>
-          <button id="ai-expand" aria-label="expand chat" title="expand">⛶</button>
-          <button id="ai-close" aria-label="hide chat">×</button>
-        </span>
-      </header>
-      <div id="ai-setup" class="hidden"></div>
-      <details class="ai-toolbox">
-        <summary>behaviours in scope for »use behaviour« <b id="ai-tool-count">0</b></summary>
-        <div id="ai-tools"></div>
-      </details>
-      <div id="ai-convs" class="hidden"></div>
-      <div id="ai-log"></div>
-      <div id="ai-intents">
-        <button class="ai-intent" data-intent="use-behaviour">🧠 Use behaviour</button>
-        <button class="ai-intent" data-intent="learn-behaviour">🌱 Learn behaviour</button>
-        <button class="ai-intent" data-intent="use-skill">🔧 Use skill</button>
-        <button class="ai-intent" data-intent="learn-skill">✨ Learn skill</button>
+      <div id="ai-modal">
+        <header>
+          <span class="k" id="ai-title">talk to the brain</span>
+          <span class="ai-hdr-btns">
+            <button id="ai-new" aria-label="new conversation" title="new conversation">＋</button>
+            <button id="ai-history" aria-label="conversation history" title="conversation history">🕘</button>
+          </span>
+        </header>
+        <div id="ai-setup" class="hidden"></div>
+        <details class="ai-toolbox">
+          <summary>behaviours the brain-stem can delegate to <b id="ai-tool-count">0</b></summary>
+          <div class="ai-tool-actions">
+            <button id="ai-tools-all" type="button">select all</button>
+            <button id="ai-tools-none" type="button">unselect all</button>
+          </div>
+          <div id="ai-tools"></div>
+        </details>
+        <div id="ai-log"></div>
+        <div id="ai-intents">
+          <button class="ai-intent" data-intent="use-behaviour">🧠 Use behaviour</button>
+          <button class="ai-intent" data-intent="learn-behaviour">🌱 Learn behaviour</button>
+          <button class="ai-intent" data-intent="use-skill">🔧 Use skill</button>
+          <button class="ai-intent" data-intent="learn-skill">✨ Learn skill</button>
+        </div>
       </div>
       <div class="ai-inputrow">
-        <input id="ai-input" type="text" placeholder="say something… (queues while it thinks)" autocomplete="off" spellcheck="false" />
+        <span class="ai-spark" aria-hidden="true">✦</span>
+        <input id="ai-input" type="text" placeholder="say something to the brain… (hover to open)" autocomplete="off" spellcheck="false" />
         <button id="ai-send" aria-label="send">↑</button>
       </div>
     </section>
-    <button id="ai-open" class="hidden" title="talk to the brain">💬</button>
 
     <div id="tooltip" class="hidden"></div>
 

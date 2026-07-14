@@ -25,7 +25,7 @@ export interface BrainActivityEvent {
   node?: NodeRef;
   /** subflow-start / subflow-done: the called behaviour. */
   subflowId?: string;
-  /** tool-call: the tool's name (typically "<server>_<tool>" or "-_-_-"-joined). */
+  /** tool-call: the tool's name ("<server>__<tool>" on the agent-SDK path, "-_-_-"-joined legacy). */
   toolName?: string;
   /** message: the assistant's chat output text. */
   text?: string;
@@ -49,8 +49,16 @@ interface RawEvent {
   subflowName?: string;
   name?: string;
   status?: string;
+  /** tool:call: the model-issued tool call id (also on the persisted message). */
+  toolCallId?: string;
   /** message: a FlujoChatMessage (OpenAI message + id/timestamp/processNodeId). */
-  message?: { id?: string; role?: string; content?: unknown; timestamp?: number };
+  message?: {
+    id?: string;
+    role?: string;
+    content?: unknown;
+    timestamp?: number;
+    tool_calls?: Array<{ id?: string; function?: { name?: string } }>;
+  };
 }
 
 /** Flatten OpenAI-style message content (string or text-part array) to plain text. */
@@ -65,9 +73,6 @@ function textOf(content: unknown): string {
   return '';
 }
 
-/** Replayed messages older than this never become bubbles (mid-run attach / reload). */
-const MESSAGE_STALE_MS = 30_000;
-
 export class ExecutionWatcher {
   private subs = new Map<string, EventSource>();
   /** conversation -> flow id per subflow depth (index 0 = top-level run). */
@@ -77,9 +82,23 @@ export class ExecutionWatcher {
   /**
    * Message ids already surfaced per conversation. FLUJO emits a live copy
    * mid-loop AND the persisted copy at end-of-run under the same id — the
-   * stream itself does not dedupe, consumers must.
+   * stream itself does not dedupe, consumers must. Kept across transport
+   * drops (a ?fromSeq resume replays events) and cleared only on run:done.
+   * NOTE: never judge freshness by comparing message timestamps to
+   * Date.now() here — they come from the FLUJO server's clock, and skew
+   * (Docker VMs, other machines) silently swallows every bubble.
    */
   private seenMsgs = new Map<string, Set<string>>();
+  /**
+   * Tool-call ids already surfaced per conversation. Tool calls arrive on TWO
+   * channels: live `tool:call` events (the OpenAI-loop model path) and
+   * `message` events whose assistant message carries `tool_calls` — the ONLY
+   * channel on the agent-SDK (Claude subscription) path, whose tool loop runs
+   * inside the adapter and never emits `tool:call`. The OpenAI path emits
+   * both (live, then the persisted message at node end) under the SAME id, so
+   * this set keeps each call from flashing twice.
+   */
+  private seenTools = new Map<string, Set<string>>();
   private timer: ReturnType<typeof setInterval> | null = null;
   private inFlight = false;
 
@@ -127,8 +146,9 @@ export class ExecutionWatcher {
     // even before (or without) a replayed run:start.
     this.stacks.set(id, [conv.flowId ?? null]);
 
+    // fromSeq is inclusive server-side — resume just past the last seen event.
     const from = this.seenSeq.get(id);
-    const url = `${base}/v1/chat/conversations/${encodeURIComponent(id)}/events${from ? `?fromSeq=${from}` : ''}`;
+    const url = `${base}/v1/chat/conversations/${encodeURIComponent(id)}/events${from !== undefined ? `?fromSeq=${from + 1}` : ''}`;
     const es = new EventSource(url);
     this.subs.set(id, es);
 
@@ -141,7 +161,7 @@ export class ExecutionWatcher {
       }
       if (typeof ev.seq === 'number') this.seenSeq.set(id, Math.max(ev.seq, this.seenSeq.get(id) ?? 0));
       this.dispatch(id, ev);
-      if (ev.type === 'run:done') this.drop(id);
+      if (ev.type === 'run:done') this.drop(id, true);
     };
     es.onerror = () => {
       // EventSource reconnects on its own; only clean up once it gave up.
@@ -149,11 +169,25 @@ export class ExecutionWatcher {
     };
   }
 
-  private drop(id: string): void {
+  /** `terminal` = the run finished; transport drops keep the message dedupe
+   *  set so a later resubscribe's replay can't re-bubble old messages. */
+  private drop(id: string, terminal = false): void {
     this.subs.get(id)?.close();
     this.subs.delete(id);
     this.stacks.delete(id);
-    this.seenMsgs.delete(id);
+    if (terminal) {
+      this.seenMsgs.delete(id);
+      this.seenTools.delete(id);
+    }
+  }
+
+  /** Mark a tool-call id as surfaced; false if it already was. */
+  private freshTool(id: string, callId: string): boolean {
+    let seen = this.seenTools.get(id);
+    if (!seen) this.seenTools.set(id, (seen = new Set()));
+    if (seen.has(callId)) return false;
+    seen.add(callId);
+    return true;
   }
 
   private dispatch(id: string, ev: RawEvent): void {
@@ -197,13 +231,22 @@ export class ExecutionWatcher {
         this.onEvent({ kind: 'node-exit', conversationId: id, flowId: flowAt(depth), node: ev.node });
         break;
       case 'tool:call':
+        if (ev.toolCallId && !this.freshTool(id, ev.toolCallId)) break;
         this.onEvent({ kind: 'tool-call', conversationId: id, flowId: flowAt(depth), node: ev.node, toolName: ev.name });
         break;
       case 'message': {
-        // Only the assistant's spoken output becomes a bubble — user turns,
-        // tool results and content-less tool-call messages stay invisible.
+        // Assistant activity only — user turns and tool results stay
+        // invisible. Spoken text becomes a bubble; tool_calls on the message
+        // become tool-call events (the agent-SDK model path streams its tool
+        // loop this way and never emits `tool:call`), deduped against the
+        // live channel by call id.
         const m = ev.message;
         if (m?.role !== 'assistant') break;
+        for (const [i, tc] of (m.tool_calls ?? []).entries()) {
+          const name = tc.function?.name;
+          if (!name || !this.freshTool(id, tc.id ?? `${m.id ?? ev.seq}:${i}`)) continue;
+          this.onEvent({ kind: 'tool-call', conversationId: id, flowId: flowAt(depth), node: ev.node, toolName: name });
+        }
         const text = textOf(m.content);
         if (!text) break;
         const mid = m.id ?? `${id}:${ev.seq}`;
@@ -211,7 +254,6 @@ export class ExecutionWatcher {
         if (!seen) this.seenMsgs.set(id, (seen = new Set()));
         if (seen.has(mid)) break;
         seen.add(mid);
-        if (typeof m.timestamp === 'number' && Date.now() - m.timestamp > MESSAGE_STALE_MS) break;
         this.onEvent({ kind: 'message', conversationId: id, flowId: flowAt(depth), node: ev.node, text });
         break;
       }

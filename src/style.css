@@ -73,6 +73,34 @@ header, aside, section, footer { position: fixed; z-index: 10; }
 #search:focus { border-color: rgba(125,123,255,0.7); }
 #search::placeholder { color: var(--muted); }
 
+.search-box { position: relative; pointer-events: auto; }
+#search-results {
+  position: absolute; z-index: 30;
+  top: calc(100% + 6px); right: 0;
+  width: 260px; max-width: 40vw;
+  max-height: 320px; overflow-y: auto;
+  margin: 0; padding: 5px;
+  list-style: none;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  backdrop-filter: blur(10px);
+  box-shadow: 0 12px 30px rgba(0,0,0,0.45);
+}
+#search-results li {
+  display: flex; align-items: center; gap: 9px;
+  padding: 8px 10px; border-radius: 9px;
+  font-size: 13px; color: var(--fg);
+  cursor: pointer; user-select: none;
+}
+#search-results li.active,
+#search-results li:hover { background: rgba(125,123,255,0.16); }
+#search-results li .dot { flex: none; width: 8px; height: 8px; border-radius: 50%; }
+#search-results li .nm { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#search-results li .tag { flex: none; font-style: normal; font-size: 10.5px; color: var(--muted); }
+#search-results li.empty { color: var(--muted); cursor: default; justify-content: center; }
+#search-results li.empty:hover { background: none; }
+
 #legend {
   left: 22px; bottom: 54px;
   width: 210px; padding: 14px 16px;
@@ -126,6 +154,23 @@ header, aside, section, footer { position: fixed; z-index: 10; }
 #r-kicker .k { font-size: 12px; text-transform: uppercase; letter-spacing: 0.16em; color: var(--muted); }
 #r-name { margin: 8px 28px 10px 0; font-size: 30px; line-height: 1.15; font-weight: 650; }
 #r-desc { margin: 0 0 18px; font-size: 17px; color: var(--fg); opacity: 0.85; line-height: 1.55; }
+#r-actions { margin: 0 0 4px; }
+.edit-link {
+  pointer-events: auto;
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 7px 14px; border-radius: 999px;
+  border: 1px solid rgba(245,158,11,0.5);
+  background: rgba(245,158,11,0.1);
+  color: var(--fg); text-decoration: none;
+  font-size: 12.5px; font-weight: 600;
+  transition: background 0.15s, box-shadow 0.15s, border-color 0.15s;
+}
+.edit-link:hover {
+  background: rgba(245,158,11,0.22);
+  border-color: rgba(245,158,11,0.85);
+  box-shadow: 0 0 18px rgba(245,158,11,0.28);
+}
+.edit-link .ic { font-size: 13px; line-height: 1; }
 #r-prompts .pblock { margin: 16px 0 0; }
 #r-prompts .ptitle {
   display: block; margin-bottom: 8px;
@@ -265,7 +310,7 @@ body.reading #legend { display: none; }
 /* Live execution: the "now thinking" strip */
 #activity {
   position: fixed; z-index: 10;
-  left: 50%; bottom: 46px; transform: translateX(-50%);
+  left: 50%; bottom: 102px; transform: translateX(-50%);
   display: flex; align-items: center; gap: 10px;
   max-width: min(640px, 84vw);
   padding: 8px 16px; border-radius: 999px;
@@ -314,19 +359,38 @@ body.reading #legend { display: none; }
 }
 #pause-btn.paused:hover { background: rgba(74,222,128,0.24); }
 
-/* AI input window (always available once FLUJO answers) */
+/* The chat: a centred command bar that blooms into a big glassy conversation.
+   The input pill is always on screen once FLUJO answers; hovering or focusing
+   it reveals the modal floating above, which auto-collapses on click-away
+   (the conversation keeps running underneath). */
 #ai-dock {
   position: fixed; z-index: 30;
-  right: 22px; bottom: 54px;
-  width: min(400px, calc(100vw - 44px));
-  max-height: min(62vh, 560px);
+  left: 50%; bottom: 30px; transform: translateX(-50%);
+  width: min(940px, 92vw);
+  display: flex; flex-direction: column; justify-content: flex-end;
+  pointer-events: none;
+}
+#ai-dock > * { pointer-events: auto; }
+
+/* Conversation panel — blooms upward from the input, ~80% of the viewport. */
+#ai-modal {
   display: flex; flex-direction: column;
-  background: var(--panel);
-  border: 1px solid rgba(245,158,11,0.35);
-  border-radius: 16px;
-  backdrop-filter: blur(12px);
-  box-shadow: 0 18px 60px rgba(0,0,0,0.55);
-  overflow: hidden;
+  height: 0; opacity: 0; overflow: hidden;
+  margin-bottom: 0;
+  transform: translateY(12px);
+  transform-origin: bottom center;
+  background: linear-gradient(180deg, rgba(15,19,36,0.9), rgba(9,12,24,0.93));
+  border: 1px solid rgba(245,158,11,0.28);
+  border-radius: 22px;
+  backdrop-filter: blur(20px);
+  box-shadow: 0 34px 100px rgba(0,0,0,0.62), 0 0 46px rgba(245,158,11,0.08);
+  transition: height 0.28s cubic-bezier(0.22,0.61,0.36,1), opacity 0.2s ease,
+              margin 0.28s cubic-bezier(0.22,0.61,0.36,1), transform 0.28s ease;
+}
+#ai-dock.open #ai-modal {
+  height: min(80vh, 760px);
+  opacity: 1; margin-bottom: 14px;
+  transform: translateY(0);
 }
 #ai-dock header {
   position: static;
@@ -337,14 +401,18 @@ body.reading #legend { display: none; }
   font-size: 10px; text-transform: uppercase; letter-spacing: 0.14em;
   color: var(--subflow);
 }
-#ai-dock header .ai-hdr-btns { display: flex; align-items: center; gap: 8px; }
-#ai-close, #ai-expand, #ai-history {
+#ai-dock header .ai-hdr-btns { display: flex; align-items: center; gap: 4px; }
+#ai-history, #ai-new {
   background: none; border: none; color: var(--muted);
-  font-size: 20px; line-height: 1; cursor: pointer; padding: 0 2px;
+  width: 36px; height: 36px; border-radius: 10px;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 22px; line-height: 1; cursor: pointer; padding: 0;
+  transition: background 0.15s, color 0.15s;
 }
-#ai-expand { font-size: 15px; }
-#ai-history { font-size: 14px; }
-#ai-close:hover, #ai-expand:hover, #ai-history:hover { color: var(--fg); }
+#ai-history { font-size: 19px; }
+#ai-history:hover, #ai-new:hover {
+  color: var(--fg); background: rgba(255,255,255,0.08);
+}
 
 /* Intent pills: pick what this message is for; the turn gets only those tools */
 #ai-intents {
@@ -365,59 +433,6 @@ body.reading #legend { display: none; }
   box-shadow: 0 0 18px rgba(245,158,11,0.25);
 }
 .ai-intent:disabled { opacity: 0.28; cursor: default; }
-#ai-dock.expanded .ai-intent { font-size: 15px; padding: 14px 22px; }
-#ai-dock.expanded #ai-intents { gap: 12px; padding-bottom: 14px; }
-
-/* Stored conversations (lives in FLUJO, survives reloads) */
-#ai-convs {
-  margin: 0 14px 8px; padding: 8px;
-  border: 1px solid var(--border); border-radius: 12px;
-  background: rgba(0,0,0,0.25);
-  max-height: 200px; overflow-y: auto; flex-shrink: 0;
-  display: flex; flex-direction: column; gap: 4px;
-}
-#ai-convs .conv {
-  display: flex; align-items: center; gap: 8px;
-  padding: 7px 10px; border-radius: 9px; border: 1px solid transparent;
-  background: none; color: var(--fg); font: inherit; font-size: 12px;
-  cursor: pointer; text-align: left; width: 100%;
-}
-#ai-convs .conv:hover { background: rgba(255,255,255,0.05); }
-#ai-convs .conv.current { border-color: rgba(245,158,11,0.5); background: rgba(245,158,11,0.08); }
-#ai-convs .conv .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-#ai-convs .conv .when { color: var(--muted); font-size: 10.5px; flex-shrink: 0; }
-#ai-convs .conv .st { font-size: 10px; flex-shrink: 0; color: var(--muted); }
-#ai-convs .conv .st.running { color: #4ade80; }
-#ai-convs .empty { color: var(--muted); font-size: 11.5px; padding: 4px 10px; }
-#ai-convs .conv.new { color: var(--subflow); font-weight: 600; }
-
-/* Fullscreen conversation */
-#ai-dock.expanded {
-  right: 0; left: 0; top: 0; bottom: 0;
-  width: auto; max-width: none; max-height: none;
-  margin: 0;
-  border-radius: 0;
-  border: none;
-}
-#ai-dock.expanded #ai-log .msg { font-size: 14px; }
-#ai-dock.expanded #ai-log,
-#ai-dock.expanded .ai-inputrow,
-#ai-dock.expanded #ai-intents {
-  width: min(900px, 100%);
-  margin-left: auto; margin-right: auto;
-}
-
-/* Reopen chip once the dock is minimized */
-#ai-open {
-  position: fixed; z-index: 30;
-  right: 22px; bottom: 54px;
-  width: 52px; height: 52px; border-radius: 50%;
-  border: 1px solid rgba(245,158,11,0.5); background: var(--panel);
-  font-size: 22px; cursor: pointer; backdrop-filter: blur(8px);
-  box-shadow: 0 8px 30px rgba(0,0,0,0.45);
-  transition: box-shadow 0.2s, border-color 0.2s;
-}
-#ai-open:hover { border-color: rgba(245,158,11,0.9); box-shadow: 0 0 24px rgba(245,158,11,0.3); }
 
 /* Setup ask-card: grow a brain-stem / start a heartbeat */
 #ai-setup {
@@ -465,9 +480,20 @@ body.reading #legend { display: none; }
 .ai-toolbox summary::before { content: '▸ '; font-size: 9px; }
 .ai-toolbox[open] summary::before { content: '▾ '; }
 .ai-toolbox summary b { color: var(--fg); }
+.ai-tool-actions { display: flex; gap: 7px; padding: 0 11px 7px; }
+.ai-tool-actions button {
+  font: inherit; font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em;
+  padding: 4px 11px; border-radius: 999px; cursor: pointer;
+  color: var(--muted); background: rgba(255,255,255,0.04);
+  border: 1px solid var(--border);
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+.ai-tool-actions button:hover {
+  color: var(--fg); border-color: rgba(245,158,11,0.55); background: rgba(245,158,11,0.1);
+}
 #ai-tools {
   display: flex; flex-wrap: wrap; gap: 5px;
-  padding: 2px 11px 10px; max-height: 120px; overflow-y: auto;
+  padding: 2px 11px 10px; max-height: 160px; overflow-y: auto;
 }
 .ai-tool {
   font: inherit; font-size: 10.5px; padding: 3px 9px; border-radius: 999px; cursor: pointer;
@@ -479,6 +505,13 @@ body.reading #legend { display: none; }
   flex: 1; min-height: 120px; overflow-y: auto;
   display: flex; flex-direction: column; gap: 8px;
   padding: 6px 14px 10px;
+}
+/* Quiet invitation while nothing's been said yet. */
+#ai-log:empty { align-items: center; justify-content: center; }
+#ai-log:empty::before {
+  content: 'Ask anything. The brain-stem can think, use its skills, and delegate to the behaviours above.';
+  max-width: 380px; text-align: center;
+  color: var(--muted); font-size: 13px; line-height: 1.65; opacity: 0.6;
 }
 #ai-log .msg {
   max-width: 88%; padding: 8px 12px; border-radius: 13px;
@@ -508,28 +541,86 @@ body.reading #legend { display: none; }
 #ai-log .msg.note.tool { color: var(--subflow); }
 #ai-log .msg.note.err { color: #ff5c8a; }
 #ai-log .msg.note.thinking { animation: heartbeat 1.1s ease-in-out infinite; }
-.ai-inputrow {
-  display: flex; gap: 8px; padding: 0 14px 14px; flex-shrink: 0;
+
+/* Tool calls in the transcript: glowing ability pills, grouped in rows.
+   Blue = abilities at work (matches the history sky); amber ◇ = the dock
+   delegating to another behaviour. */
+#ai-log .tools-row {
+  display: flex; flex-wrap: wrap; gap: 6px;
+  justify-content: center; align-self: center;
+  max-width: 96%; padding: 2px 0;
 }
+.tpill {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 12px; border-radius: 999px;
+  border: 1px solid rgba(77,141,246,0.45);
+  background: radial-gradient(120% 160% at 50% 0%, rgba(77,141,246,0.22), rgba(77,141,246,0.07));
+  box-shadow: 0 0 14px rgba(77,141,246,0.18), inset 0 0 8px rgba(77,141,246,0.10);
+  color: #cfe0ff; font-size: 11px; line-height: 1.4;
+  white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis;
+}
+.tpill i { font-style: normal; font-size: 11px; opacity: 0.9; }
+.tpill em {
+  font-style: normal; color: #86a9ea;
+  text-transform: uppercase; font-size: 9px; letter-spacing: 0.08em;
+  padding-right: 6px; border-right: 1px solid rgba(134,169,234,0.35);
+}
+.tpill.live {
+  animation: pillpulse 1.2s ease-in-out infinite;
+}
+.tpill.beh {
+  border-color: rgba(245,158,11,0.45);
+  background: radial-gradient(120% 160% at 50% 0%, rgba(245,158,11,0.20), rgba(245,158,11,0.06));
+  box-shadow: 0 0 14px rgba(245,158,11,0.16), inset 0 0 8px rgba(245,158,11,0.10);
+  color: #ffe1b0;
+}
+@keyframes pillpulse {
+  0%, 100% { box-shadow: 0 0 10px rgba(77,141,246,0.15), inset 0 0 8px rgba(77,141,246,0.10); filter: brightness(1); }
+  50% { box-shadow: 0 0 22px rgba(77,141,246,0.45), inset 0 0 12px rgba(77,141,246,0.22); filter: brightness(1.25); }
+}
+/* The always-visible command pill. */
+.ai-inputrow {
+  display: flex; gap: 8px; align-items: center;
+  padding: 7px 8px 7px 16px; flex-shrink: 0;
+  background: var(--panel);
+  border: 1px solid rgba(245,158,11,0.4);
+  border-radius: 999px;
+  backdrop-filter: blur(14px);
+  box-shadow: 0 14px 44px rgba(0,0,0,0.5);
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+#ai-dock.open .ai-inputrow,
+.ai-inputrow:hover,
+.ai-inputrow:focus-within {
+  border-color: rgba(245,158,11,0.72);
+  box-shadow: 0 14px 44px rgba(0,0,0,0.5), 0 0 28px rgba(245,158,11,0.22);
+}
+/* A reply arrived while collapsed — pulse the pill to draw the eye. */
+#ai-dock.unread .ai-inputrow {
+  border-color: rgba(245,158,11,0.95);
+  animation: pillpulse 1.3s ease-in-out infinite;
+}
+.ai-spark { color: var(--subflow); font-size: 14px; flex-shrink: 0; opacity: 0.8; }
+#ai-dock.open .ai-spark { animation: heartbeat 2.4s ease-in-out infinite; }
 #ai-input {
   flex: 1; min-width: 0;
-  padding: 10px 14px; border-radius: 999px;
-  border: 1px solid var(--border); background: rgba(0,0,0,0.3);
-  color: var(--fg); font: inherit; font-size: 13px; outline: none;
+  padding: 9px 2px; border: none; background: none;
+  color: var(--fg); font: inherit; font-size: 14px; outline: none;
 }
-#ai-input:focus { border-color: rgba(245,158,11,0.6); }
 #ai-input::placeholder { color: var(--muted); }
 #ai-send {
-  width: 38px; height: 38px; border-radius: 50%; flex-shrink: 0;
-  border: 1px solid rgba(245,158,11,0.55); background: rgba(245,158,11,0.15);
-  color: var(--fg); font-size: 16px; cursor: pointer;
+  width: 40px; height: 40px; border-radius: 50%; flex-shrink: 0;
+  border: 1px solid rgba(245,158,11,0.55); background: rgba(245,158,11,0.16);
+  color: var(--fg); font-size: 17px; cursor: pointer;
   transition: background 0.2s;
 }
-#ai-send:hover { background: rgba(245,158,11,0.3); }
+#ai-send:hover:not(:disabled) { background: rgba(245,158,11,0.32); }
+#ai-send:disabled { opacity: 0.4; cursor: default; }
 #ai-send.busy { animation: heartbeat 1.1s ease-in-out infinite; }
 
 @media (max-width: 720px) {
-  #ai-dock { right: 12px; left: 12px; width: auto; }
+  #ai-dock { left: 12px; right: 12px; transform: none; width: auto; bottom: 16px; }
+  #ai-dock.open #ai-modal { height: 78vh; }
 }
 
 /* Heartbeat status bar — top right, overview only. The transcript itself is
@@ -692,6 +783,26 @@ body.reading #legend { display: none; }
   border: 1px solid var(--border);
 }
 
+/* History view: continue the focused conversation in the chat dock */
+.hist-continue {
+  position: fixed; left: 50%; bottom: 104px;
+  transform: translateX(-50%);
+  z-index: 25;
+  max-width: min(80vw, 560px);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  padding: 11px 22px; border-radius: 999px;
+  border: 1px solid rgba(245,158,11,0.55);
+  background: rgba(10, 14, 28, 0.85);
+  box-shadow: 0 0 22px rgba(245,158,11,0.22);
+  color: var(--fg); font: inherit; font-size: 13px; font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, box-shadow 0.15s;
+}
+.hist-continue:hover {
+  background: rgba(245,158,11,0.16);
+  box-shadow: 0 0 30px rgba(245,158,11,0.4);
+}
+
 /* Chat bubbles: the brain speaking, floating over the neuron that said it */
 .bubble-layer { position: fixed; inset: 0; z-index: 6; pointer-events: none; overflow: hidden; }
 .chat-bubble {
@@ -716,6 +827,16 @@ body.reading #legend { display: none; }
   white-space: pre-wrap; word-break: break-word;
   max-height: 7.3em; overflow: hidden;
 }
+/* Tool-call pills over a working neuron: compact, ability-blue, short-lived */
+.chat-bubble.pill {
+  padding: 4px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(77,141,246,0.5);
+  background: rgba(10,18,38,0.82);
+  box-shadow: 0 0 16px rgba(77,141,246,0.28);
+  font-size: 11px; color: #cfe0ff;
+}
+.chat-bubble.pill .text { white-space: nowrap; max-height: none; }
 
 .hidden { display: none !important; }
 

@@ -33,23 +33,31 @@ export class ChatBubbleLayer {
     document.body.appendChild(this.container);
   }
 
-  /** Show a new bubble above the given behaviour (null = no known neuron). */
-  push(flowId: string | null, flowName: string, text: string): void {
+  /**
+   * Show a new bubble above the given behaviour (null = no known neuron).
+   * `pill` renders the compact single-line variant used for tool calls —
+   * shorter-lived and visually lighter than a spoken bubble.
+   */
+  push(flowId: string | null, flowName: string, text: string, opts?: { pill?: boolean }): void {
     const short = text.length > MAX_CHARS ? text.slice(0, MAX_CHARS - 1).trimEnd() + '…' : text;
 
     const el = document.createElement('div');
-    el.className = 'chat-bubble';
-    const who = document.createElement('div');
-    who.className = 'who';
-    who.textContent = flowName;
+    el.className = opts?.pill ? 'chat-bubble pill' : 'chat-bubble';
+    if (flowName) {
+      const who = document.createElement('div');
+      who.className = 'who';
+      who.textContent = flowName;
+      el.append(who);
+    }
     const body = document.createElement('div');
     body.className = 'text';
     body.textContent = short;
-    el.append(who, body);
+    el.append(body);
     this.container.appendChild(el);
 
     // Reading time scales with length; the fade-out rides on top.
-    const ttl = Math.min(14_000, 3_500 + short.length * 45) + FADE_OUT_MS;
+    // Pills are glanceable, not read — they linger only briefly.
+    const ttl = (opts?.pill ? 2_600 : Math.min(14_000, 3_500 + short.length * 45)) + FADE_OUT_MS;
     this.bubbles.push({ el, flowId, born: performance.now(), ttl });
 
     while (this.bubbles.length > MAX_BUBBLES) this.bubbles.shift()!.el.remove();

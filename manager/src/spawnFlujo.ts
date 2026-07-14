@@ -94,7 +94,7 @@ async function start(url: string): Promise<boolean> {
   }
 
   const port = new URL(url).port || '4200';
-  console.log(`default FLUJO is not running — starting one via "npx -y flujo-ai" on :${port} (first run downloads the package, this can take minutes)`);
+  console.log(`default FLUJO is not running — starting one via "npx -y flujo-ai" at http://localhost:${port} (first run downloads the package, this can take minutes)`);
   console.log(`  data dir: ${DATA_DIR}`);
 
   const args = ['-y', 'flujo-ai', '--no-open', '--port', port];

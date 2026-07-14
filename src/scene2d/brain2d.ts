@@ -2,7 +2,7 @@ import type { BrainGraph, Neuron, NodeChatMessage, Synapse, SynapseKind } from '
 import { BACKGROUND, SYNAPSE_COLORS, nodeTypeLabel } from '../theme';
 import { ABILITY_GROUP, groupNeurons, type GroupMode, type Grouping } from '../grouping';
 import { computeSectionedLayout } from '../layout/sectionedLayout';
-import { abilityForTool } from '../data/distill';
+import { abilityForTool, splitToolName } from '../data/distill';
 import { abilityTint, neuronRadius } from '../scene/stars';
 import type { Hud, RelationLine } from '../ui/hud';
 import { ChatBubbleLayer } from '../ui/bubbles';
@@ -252,7 +252,9 @@ export class Brain2D {
     this.searchSet = null;
     this.hoveredId = null;
     this.flowGraph = null;
-    this.hud.hidePanel();
+    // keepSelection: setFocus below re-announces a surviving selection, and
+    // the dock validates a vanished one against the new graph itself.
+    this.hud.hidePanel(true);
     this.build();
     this.hud.setStats(graph, this.grouping.groups.length);
     if (hadFocus && graph.neurons.some((n) => n.id === hadFocus)) this.setFocus(hadFocus);
@@ -265,7 +267,7 @@ export class Brain2D {
     this.bubbles.dispose();
     this.hud.hideTooltip();
     this.hud.setActivity(null);
-    this.hud.hidePanel();
+    this.hud.hidePanel(true); // teardown, not a deselect — the chat target stays
   }
 
   // ---------- camera ----------
@@ -640,6 +642,12 @@ export class Brain2D {
         if (ability) {
           this.glow.set(ability.id, 1);
           if (e.flowId) this.flash(e.flowId, ability.id);
+        }
+        if (e.toolName) {
+          // A transient pill over the acting behaviour: ⚙ server · tool.
+          const { server, tool } = splitToolName(e.toolName);
+          const known = e.flowId && this.graph.neurons.some((n) => n.id === e.flowId);
+          this.bubbles.push(known ? e.flowId : null, '', `⚙ ${server ? `${server} · ` : ''}${tool}`, { pill: true });
         }
         this.hudActivity = { flowId: e.flowId, detail: e.toolName ? `tool ${e.toolName}` : undefined };
         break;

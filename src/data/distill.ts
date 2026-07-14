@@ -13,6 +13,14 @@ import type {
 
 const NODE_TYPES: NodeType[] = ['start', 'process', 'finish', 'mcp', 'subflow'];
 
+/** The brain-stem behaviour — the root flow carrying the mind's life goal. */
+export const STEM_RE = /brain.?stem/i;
+
+/** True for the brain-stem behaviour (never an ability neuron). */
+export function isStem(n: Neuron): boolean {
+  return n.kind !== 'ability' && STEM_RE.test(n.name);
+}
+
 function nodeType(n: RawNode): NodeType {
   const t = (n.data?.type ?? n.type ?? '') as NodeType;
   return NODE_TYPES.includes(t) ? t : 'process';
@@ -184,6 +192,21 @@ export function abilityForTool(graph: BrainGraph, toolName?: string): Neuron | n
     }
   }
   return best;
+}
+
+/**
+ * Split a wire tool name into its server and tool halves for display:
+ * "memory__open_nodes" → { server: "memory", tool: "open nodes" }.
+ * Handles the agent-SDK "<server>__<tool>" scheme and the legacy
+ * "_-_-_"-joined one; anything else is shown whole as the tool.
+ */
+export function splitToolName(name: string): { server: string | null; tool: string } {
+  const pretty = (s: string) => s.replace(/_/g, ' ').trim();
+  const legacy = name.split('_-_-_').filter(Boolean);
+  if (legacy.length >= 2) return { server: legacy[0], tool: pretty(legacy.slice(1).join(' ')) };
+  const sep = name.indexOf('__');
+  if (sep > 0) return { server: name.slice(0, sep), tool: pretty(name.slice(sep + 2)) };
+  return { server: null, tool: pretty(name) };
 }
 
 /** An MCP server as a small neuron of its own. */

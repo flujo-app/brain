@@ -15,7 +15,7 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 
 import type { BrainGraph, Neuron, NodeChatMessage, SynapseKind } from '../types';
-import { abilityForTool } from '../data/distill';
+import { abilityForTool, splitToolName } from '../data/distill';
 import { BACKGROUND, nodeTypeLabel } from '../theme';
 import { groupNeurons, type GroupMode } from '../grouping';
 import { computeSectionedLayout, type SectionedLayout } from '../layout/sectionedLayout';
@@ -111,9 +111,9 @@ export class Brain {
     this.controls.autoRotateSpeed = 0.28;
     this.controls.screenSpacePanning = true;
 
-    // Depth cue: the far side of the brain recedes into the dark. The
-    // background starfield opts out (fog would swallow it entirely).
-    this.scene.fog = new FogExp2(BACKGROUND, 0.003);
+    // Subtle depth cue only — the 2D view has no haze at all, and heavy fog
+    // reads as murk rather than depth. The background starfield opts out.
+    this.scene.fog = new FogExp2(BACKGROUND, 0.001);
 
     this.scene.add(createStarfield(1600, 900));
     this.scene.add(this.content);
@@ -161,7 +161,7 @@ export class Brain {
     this.bubbles.dispose();
     this.hud.hideTooltip();
     this.hud.setActivity(null);
-    this.hud.hidePanel();
+    this.hud.hidePanel(true); // teardown, not a deselect — the chat target stays
   }
 
   private currentGroupCount(): number {
@@ -203,7 +203,9 @@ export class Brain {
     this.focusId = null;
     this.searchSet = null;
     this.hoveredId = null;
-    this.hud.hidePanel();
+    // keepSelection: setFocus below re-announces a surviving selection, and
+    // the dock validates a vanished one against the new graph itself.
+    this.hud.hidePanel(true);
     this.build();
     this.hud.setStats(graph, this.currentGroupCount());
     // Restore focus if that behaviour still exists after the refresh.
@@ -235,8 +237,9 @@ export class Brain {
     this.controls.maxDistance = dist * 3;
     this.camera.updateProjectionMatrix();
 
-    // Scale the depth fade to the brain's actual size.
-    const density = 0.5 / dist;
+    // Scale the depth fade to the brain's actual size — kept faint (the far
+    // side dims a few percent) so the view stays as crisp as the 2D renderer.
+    const density = 0.15 / dist;
     (this.scene.fog as FogExp2).density = density;
     this.stars.setFog(density);
   }
@@ -504,6 +507,12 @@ export class Brain {
         if (ability) {
           this.glow.set(ability.id, 1);
           if (e.flowId) this.synapses.flash(e.flowId, ability.id);
+        }
+        if (e.toolName) {
+          // A transient pill over the acting behaviour: ⚙ server · tool.
+          const { server, tool } = splitToolName(e.toolName);
+          const known = e.flowId && this.graph.neurons.some((n) => n.id === e.flowId);
+          this.bubbles.push(known ? e.flowId : null, '', `⚙ ${server ? `${server} · ` : ''}${tool}`, { pill: true });
         }
         this.hudActivity = { flowId: e.flowId, detail: e.toolName ? `tool ${e.toolName}` : undefined };
         break;

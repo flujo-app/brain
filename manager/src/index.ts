@@ -455,7 +455,7 @@ if (fs.existsSync(UI_DIR)) {
 }
 
 app.listen(PORT, () => {
-  console.log(`brain-manager listening on :${PORT}`);
+  console.log(`brain-manager listening on http://localhost:${PORT}`);
   console.log(`  default FLUJO: ${FLUJO_DEFAULT_URL}`);
   console.log(`  ui dir: ${fs.existsSync(UI_DIR) ? UI_DIR : '(none — API/proxy only)'}`);
   // Standalone launcher only (FLUJO_AUTOSTART=1): if nothing answers on the

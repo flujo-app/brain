@@ -133,6 +133,14 @@ export class Hud {
   private heartbeatInfo: HeartbeatInfo | null = null;
   /** True while the user holds the tempo slider — polls must not snap it back. */
   private tempoDragging = false;
+  /** Every neuron in the current graph, for the search results dropdown. */
+  private neurons: Neuron[] = [];
+  /** Behaviours currently matching the search box, in display order. */
+  private results: Neuron[] = [];
+  /** Highlighted result for keyboard nav (index into `results`, -1 = none). */
+  private activeResult = -1;
+  /** FLUJO editor base URL, once the loader resolves it (null = no link). */
+  private editorBase: string | null = null;
 
   onSearch: (q: string) => void = () => {};
   onToggleKind: (k: SynapseKind, on: boolean) => void = () => {};
@@ -149,13 +157,35 @@ export class Hud {
   onTempo: (executionId: string, cron: string) => void | Promise<void> = () => {};
   /** 💬 on the heartbeat bar: open its conversation in the chat dock. */
   onOpenHeartbeat: (conversationId: string) => void = () => {};
+  /**
+   * The selected behaviour changed (null = overview, or an ability selected).
+   * Fired from the selection panels so every renderer reports the same way;
+   * the chat dock retargets its conversation to the selection.
+   */
+  onSelect: (behaviourId: string | null) => void = () => {};
 
   /** ECG animation state. */
   private ecgRaf = 0;
 
   constructor() {
     const search = this.$<HTMLInputElement>('search');
-    search.addEventListener('input', () => this.onSearch(search.value.trim().toLowerCase()));
+    search.addEventListener('input', () => {
+      const q = search.value.trim().toLowerCase();
+      this.onSearch(q);
+      this.renderResults(q);
+    });
+    search.addEventListener('keydown', (e) => this.onSearchKey(e));
+    search.addEventListener('focus', () => this.renderResults(search.value.trim().toLowerCase()));
+    // Blur hides the dropdown, but only after a pending result click resolves.
+    search.addEventListener('blur', () => setTimeout(() => this.hideResults(), 120));
+
+    const results = this.$('search-results');
+    // Keep focus in the input so blur/keyboard state survives a result click.
+    results.addEventListener('mousedown', (e) => e.preventDefault());
+    results.addEventListener('click', (e) => {
+      const li = (e.target as HTMLElement).closest('li[data-id]') as HTMLElement | null;
+      if (li) this.chooseResult(this.results.findIndex((n) => n.id === li.dataset.id));
+    });
 
     document.querySelectorAll<HTMLElement>('#legend .syn').forEach((el) => {
       // Shared-model is off by default (see index.html) to keep the web clean.
@@ -207,6 +237,104 @@ export class Hud {
       const id = this.heartbeatInfo?.conversationId;
       if (id) this.onOpenHeartbeat(id);
     });
+  }
+
+  // ---- search results --------------------------------------------------------
+
+  /** Rebuild the results dropdown for the current query (behaviours first). */
+  private renderResults(q: string): void {
+    if (!q) return this.hideResults();
+    const matches = this.neurons.filter((n) => n.name.toLowerCase().includes(q));
+    // Behaviours are what the user is looking for — list them above abilities.
+    matches.sort((a, b) => {
+      const ka = a.kind === 'ability' ? 1 : 0;
+      const kb = b.kind === 'ability' ? 1 : 0;
+      return ka - kb || a.name.localeCompare(b.name);
+    });
+    this.results = matches.slice(0, 12);
+    this.activeResult = -1;
+
+    const box = this.$('search-results');
+    if (!this.results.length) {
+      box.innerHTML = '<li class="empty" aria-disabled="true">no matches</li>';
+    } else {
+      box.innerHTML = this.results
+        .map((n, i) => {
+          const ability = n.kind === 'ability';
+          const color = hex(NODE_TYPE_COLORS[ability ? 'mcp' : 'subflow']);
+          const tag = ability ? 'ability' : `${n.nodeTotal} nodes`;
+          return `<li data-id="${esc(n.id)}" role="option" id="search-opt-${i}" aria-selected="false">
+            <span class="dot" style="color:${color};background:${color}"></span>
+            <span class="nm">${esc(n.name)}</span>
+            <em class="tag">${esc(tag)}</em>
+          </li>`;
+        })
+        .join('');
+    }
+    box.classList.remove('hidden');
+    this.$('search').setAttribute('aria-expanded', 'true');
+  }
+
+  private hideResults(): void {
+    this.results = [];
+    this.activeResult = -1;
+    this.$('search-results').classList.add('hidden');
+    const input = this.$('search');
+    input.setAttribute('aria-expanded', 'false');
+    input.removeAttribute('aria-activedescendant');
+  }
+
+  /** Move the keyboard highlight and sync the DOM + aria state. */
+  private setActiveResult(i: number): void {
+    const n = this.results.length;
+    if (!n) return;
+    this.activeResult = ((i % n) + n) % n;
+    const input = this.$('search');
+    this.$('search-results')
+      .querySelectorAll<HTMLElement>('li[data-id]')
+      .forEach((li, idx) => {
+        const on = idx === this.activeResult;
+        li.classList.toggle('active', on);
+        li.setAttribute('aria-selected', on ? 'true' : 'false');
+        if (on) {
+          li.scrollIntoView({ block: 'nearest' });
+          input.setAttribute('aria-activedescendant', li.id);
+        }
+      });
+  }
+
+  /** Enter / arrows / Escape while the search box has focus. */
+  private onSearchKey(e: KeyboardEvent): void {
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      if (this.results.length) this.setActiveResult(this.activeResult + 1);
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      if (this.results.length) this.setActiveResult(this.activeResult - 1);
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      this.chooseResult(this.activeResult >= 0 ? this.activeResult : 0);
+    } else if (e.key === 'Escape') {
+      const input = this.$<HTMLInputElement>('search');
+      if (input.value) {
+        input.value = '';
+        this.onSearch('');
+      }
+      this.hideResults();
+      input.blur();
+    }
+  }
+
+  /** Focus the chosen behaviour in the scene and close the dropdown. */
+  private chooseResult(i: number): void {
+    const n = this.results[i];
+    if (!n) return;
+    const input = this.$<HTMLInputElement>('search');
+    input.value = n.name;
+    this.onSearch(n.name.toLowerCase());
+    this.onFocusBehaviour(n.id);
+    this.hideResults();
+    input.blur();
   }
 
   // ---- heartbeat ECG ---------------------------------------------------------
@@ -324,6 +452,18 @@ export class Hud {
     });
   }
 
+  /** FLUJO editor base (per-instance), for the reader's "open in editor" link. */
+  setEditorBase(url: string): void {
+    this.editorBase = url.replace(/\/+$/, '');
+  }
+
+  /** The deep link that opens a given flow in this instance's FLUJO editor.
+   *  FLUJO's /flows page reads ?flow=<id>; older builds ignore it and land on
+   *  the dashboard, so the link degrades gracefully. */
+  private editorLink(flowId: string): string {
+    return `${this.editorBase}/flows?flow=${encodeURIComponent(flowId)}`;
+  }
+
   /** The big-type reader on the left: name, description, prompts. */
   private showReader(
     kicker: string,
@@ -332,6 +472,7 @@ export class Hud {
     desc: string,
     prompts: PromptEntry[],
     emptyNote = '',
+    editorFlowId: string | null = null,
   ): void {
     this.$('r-kicker').innerHTML =
       `<span class="k"${kickerColor ? ` style="color:${kickerColor}"` : ''}>${esc(kicker)}</span>`;
@@ -339,6 +480,18 @@ export class Hud {
     const d = this.$('r-desc');
     d.textContent = desc;
     d.style.display = desc ? '' : 'none';
+    // "Open in editor" — only for behaviours (flows), and only once we know
+    // where this instance's editor lives.
+    const actions = this.$('r-actions');
+    if (editorFlowId && this.editorBase) {
+      actions.innerHTML =
+        `<a class="edit-link" href="${this.editorLink(editorFlowId)}" target="_blank" rel="noopener">` +
+        `<span class="ic">✎</span> Open in Editor</a>`;
+      actions.style.display = '';
+    } else {
+      actions.innerHTML = '';
+      actions.style.display = 'none';
+    }
     const html = prompts.map(promptSection).join('');
     this.$('r-prompts').innerHTML = html || (emptyNote ? `<p class="empty">${esc(emptyNote)}</p>` : '');
   }
@@ -406,6 +559,17 @@ export class Hud {
     this.$<HTMLSelectElement>('view-mode').value = mode;
   }
 
+  /** The searchable set of neurons — kept current from the graph loader so
+   *  the results dropdown works in every view, including history. */
+  setSearchIndex(neurons: Neuron[]): void {
+    this.neurons = neurons;
+    // Drop any results that referred to a since-removed behaviour.
+    const input = this.$<HTMLInputElement>('search');
+    if (!this.$('search-results').classList.contains('hidden')) {
+      this.renderResults(input.value.trim().toLowerCase());
+    }
+  }
+
   setStats(graph: BrainGraph, sections: number): void {
     const abilities = graph.neurons.filter((n) => n.kind === 'ability').length;
     this.$('stat-flows').textContent = String(graph.neurons.length - abilities);
@@ -428,15 +592,19 @@ export class Hud {
   /** The behaviour overview panel. */
   showPanel(n: Neuron, relations: RelationLine[], servers: Record<string, ServerStatus> = {}): void {
     if (n.kind === 'ability') {
+      this.onSelect(null); // abilities can't chat — the dock falls back
       this.showAbilityPanel(n, relations, servers);
       return;
     }
+    this.onSelect(n.id);
     this.showReader(
       'behaviour',
       '',
       n.name,
       n.description || (n.broken ? 'No connections — a dormant behaviour.' : ''),
       [{ title: 'behaviour prompt', text: n.prompt }],
+      '',
+      n.id,
     );
 
     this.$('p-kicker').innerHTML = '<span class="k">behaviour</span>';
@@ -500,6 +668,7 @@ export class Hud {
     subflowTarget: Neuron | null,
     nodeMessages: Array<{ role: string; text: string }> = [],
   ): void {
+    this.onSelect(behaviour.id);
     const color = hex(NODE_TYPE_COLORS[node.type]);
 
     const prompts: PromptEntry[] = [];
@@ -510,7 +679,7 @@ export class Hud {
     } else if (node.type === 'subflow' && subflowTarget) {
       prompts.push({ title: `prompt of "${subflowTarget.name}"`, text: subflowTarget.prompt });
     }
-    this.showReader(`${nodeTypeLabel(node.type)} node`, color, node.label, node.description ?? '', prompts, emptyNote);
+    this.showReader(`${nodeTypeLabel(node.type)} node`, color, node.label, node.description ?? '', prompts, emptyNote, behaviour.id);
 
     this.$('p-kicker').innerHTML =
       `<button class="back" id="p-back">← ${esc(behaviour.name)}</button>` +
@@ -631,7 +800,10 @@ export class Hud {
     }).join('');
   }
 
-  hidePanel(): void {
+  /** `keepSelection` (renderer teardown): hide the panels without telling
+   *  the chat dock to retarget — the user didn't deselect anything. */
+  hidePanel(keepSelection = false): void {
+    if (this.selectionOpen && !keepSelection) this.onSelect(null);
     this.selectionOpen = false;
     this.syncPanels();
   }

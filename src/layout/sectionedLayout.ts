@@ -1,6 +1,7 @@
 import { Vector3 } from 'three';
 import type { BrainGraph } from '../types';
 import type { Grouping } from '../grouping';
+import { isStem } from '../data/distill';
 
 export interface SectionedLayout {
   positions: Map<string, Vector3>;
@@ -140,12 +141,19 @@ export function computeSectionedLayout(graph: BrainGraph, grouping: Grouping, fl
     radii.set(grp.id, max);
   }
 
-  // Recentre the whole brain on its centroid.
-  const centroid = new Vector3();
-  for (const p of pos.values()) centroid.add(p);
-  centroid.multiplyScalar(1 / Math.max(n, 1));
-  for (const p of pos.values()) p.sub(centroid);
-  for (const c of centers.values()) c.sub(centroid);
+  // Recentre the whole brain. The brain-stem — the mind's root — always sits
+  // dead centre when one exists (both renderers frame the camera on the
+  // origin), so it reads as the core the rest of the brain grows around.
+  // Without a stem we fall back to the geometric centroid.
+  const stem = nodes.find(isStem);
+  const origin = (stem && pos.get(stem.id)) || (() => {
+    const centroid = new Vector3();
+    for (const p of pos.values()) centroid.add(p);
+    return centroid.multiplyScalar(1 / Math.max(n, 1));
+  })();
+  const shift = origin.clone();
+  for (const p of pos.values()) p.sub(shift);
+  for (const c of centers.values()) c.sub(shift);
 
   return { positions: pos, centers, radii };
 }

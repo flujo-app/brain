@@ -4,7 +4,7 @@ import { ExecutionWatcher, type BrainActivityEvent } from './data/execution';
 import { HeartbeatWatcher, setHeartbeatTempo } from './data/heartbeat';
 import { Brain } from './scene/brain';
 import { Brain2D } from './scene2d/brain2d';
-import { HistoryView } from './scene/history';
+import { History2D } from './scene2d/history2d';
 import { Hud, type ViewMode } from './ui/hud';
 import { AiDock } from './ui/aichat';
 import type { BrainGraph, NodeChatMessage } from './types';
@@ -43,14 +43,17 @@ async function editorUrl(base: string | null): Promise<string | null> {
   return null;
 }
 
-/** Once connected, make the badge a link to the instance's own editor. */
+/** Once connected, make the badge a link to the instance's own editor, and
+ *  hand the resolved editor base to the HUD for its per-flow "open in editor". */
 let editorLinked = false;
-function linkBadgeToEditor(): void {
+function linkBadgeToEditor(hud: Hud): void {
   if (editorLinked) return;
   editorLinked = true;
   void editorUrl(flujoBase()).then((url) => {
+    if (!url) return;
+    hud.setEditorBase(url);
     const badge = document.getElementById('source-badge') as HTMLAnchorElement | null;
-    if (!badge || !url) return;
+    if (!badge) return;
     badge.href = url;
     badge.target = '_blank';
     badge.rel = 'noopener';
@@ -92,7 +95,7 @@ async function boot() {
   const hud = new Hud();
   const aiDock = new AiDock();
   let mode = initialMode();
-  let brain: Brain | Brain2D | HistoryView | null = null;
+  let brain: Brain | Brain2D | History2D | null = null;
   let graph: BrainGraph | null = null;
   let hash: string | null = null;
   /** The chat dock's current conversation, pinned to flow nodes. */
@@ -106,9 +109,21 @@ async function boot() {
     const canvas = freshCanvas();
     brain =
       mode === '2d' ? new Brain2D(canvas, graph, hud)
-      : mode === 'history' ? new HistoryView(canvas, graph, hud)
+      : mode === 'history' ? new History2D(canvas, graph, hud)
       : new Brain(canvas, graph, hud);
     brain.setConversation(convo);
+    // History constellations can be picked up and continued in the dock.
+    if (brain instanceof History2D) {
+      brain.onContinue = (conversationId) => aiDock.openConversation(conversationId);
+    }
+  };
+
+  const switchView = (m: ViewMode) => {
+    if (m === mode) return;
+    mode = m;
+    localStorage.setItem(VIEW_KEY, m);
+    hud.setViewMode(m);
+    createRenderer();
   };
 
   // The dock's conversation overlays the focused flow graph (💬 badges).
@@ -118,15 +133,17 @@ async function boot() {
   };
   // The heartbeat bar's 💬 opens the beat's stored conversation in the dock.
   hud.onOpenHeartbeat = (conversationId) => aiDock.openConversation(conversationId);
+  // Selecting a behaviour in the scene retargets the chat to it.
+  hud.onSelect = (flowId) => aiDock.setSelected(flowId);
+  // The dock's 🕘 opens the history sky, spotlighting the chat's behaviour.
+  aiDock.onShowHistory = (flowId) => {
+    switchView('history');
+    if (brain instanceof History2D) brain.filterFlow(flowId);
+  };
 
   // The view toggle swaps whole renderers: real WebGL vs. real Canvas 2D.
   // (Renderers wire the rest of the HUD themselves; this callback is ours.)
-  hud.onViewMode = (m) => {
-    if (m === mode) return;
-    mode = m;
-    localStorage.setItem(VIEW_KEY, m);
-    createRenderer();
-  };
+  hud.onViewMode = (m) => switchView(m);
 
   const apply = (data: { graph: BrainGraph; hash: string }) => {
     hash = data.hash;
@@ -139,8 +156,9 @@ async function boot() {
       // Reachable but empty (fresh instance) — distinct from unreachable.
       setBadge('● FLUJO connected — no flows yet', true);
     }
-    linkBadgeToEditor();
+    linkBadgeToEditor(hud);
     aiDock.setGraph(graph);
+    hud.setSearchIndex(graph.neurons);
   };
 
   const first = await fetchBrain();
@@ -154,8 +172,12 @@ async function boot() {
     (data) => apply(data),
   );
 
-  // Live execution: watch running conversations and feed events to the scene.
-  new ExecutionWatcher((e) => brain?.handleExecution(e)).start();
+  // Live execution: watch running conversations and feed events to the scene
+  // and the chat dock (which shows the open conversation's tool calls live).
+  new ExecutionWatcher((e) => {
+    brain?.handleExecution(e);
+    aiDock.handleExecution(e);
+  }).start();
 
   // The last heartbeat's transcript, top right while nothing is focused.
   new HeartbeatWatcher((h) => hud.setHeartbeat(h)).start();
