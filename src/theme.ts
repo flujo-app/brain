@@ -32,6 +32,9 @@ export const SYNAPSE_COLORS: Record<SynapseKind, number> = {
   model: 0xa78bfa, // violet — shared model
 };
 
+/** A tool result that failed — the reverse flash burns red. */
+export const SYNAPSE_ERROR = 0xff3b3b;
+
 /** FLUJO's own node palette (brightened for additive glow on dark). */
 export const NODE_TYPE_COLORS: Record<NodeType, number> = {
   start: 0xa1887f, // brown, as in FLUJO

@@ -1,6 +1,4 @@
 import { Vector3, type Camera } from 'three';
-import { ABILITY_GROUP, type Grouping } from '../grouping';
-import type { SectionedLayout } from '../layout/sectionedLayout';
 import type { FlowGraph } from './flowGraph';
 import { NODE_R } from './flowGraph';
 import type { Neuron } from '../types';
@@ -88,25 +86,6 @@ export class LabelLayer {
   dispose(): void {
     this.container.remove();
     this.labels = [];
-  }
-}
-
-/** Floating labels naming each galaxy section. */
-export class SectionLabels extends LabelLayer {
-  constructor(grouping: Grouping, layout: SectionedLayout) {
-    super();
-    for (const g of grouping.groups) {
-      const pos = layout.centers.get(g.id)!.clone();
-      pos.y += (layout.radii.get(g.id) ?? 4) + 3;
-      const n = g.neuronIds.length;
-      const noun = g.id === ABILITY_GROUP ? (n === 1 ? 'ability' : 'abilities') : (n === 1 ? 'behaviour' : 'behaviours');
-      const el = this.add(
-        pos,
-        'section-label',
-        `<span class="name">${escapeHtml(g.label)}</span><span class="n">${n} ${noun}</span>`,
-      );
-      el.style.setProperty('--c', '#' + g.color.getHexString());
-    }
   }
 }
 

@@ -1,13 +1,14 @@
 import type { BrainGraph, Neuron, NodeChatMessage, Synapse, SynapseKind } from '../types';
-import { BACKGROUND, SYNAPSE_COLORS, nodeTypeLabel } from '../theme';
-import { ABILITY_GROUP, groupNeurons, type GroupMode, type Grouping } from '../grouping';
-import { computeSectionedLayout } from '../layout/sectionedLayout';
+import { BACKGROUND, SYNAPSE_COLORS, SYNAPSE_ERROR, nodeTypeLabel } from '../theme';
+import { groupNeurons, type GroupMode, type Grouping } from '../grouping';
+import { computeBrainLayout } from '../layout/brainLayout';
 import { abilityForTool, splitToolName } from '../data/distill';
-import { abilityTint, neuronRadius } from '../scene/stars';
+import { abilityTint, neuronRadius } from '../scene/neuronStyle';
 import type { Hud, RelationLine } from '../ui/hud';
 import { ChatBubbleLayer } from '../ui/bubbles';
+import { fireLink, fireNeuron, linkKey, linkWidthMul, neuronSizeMul } from '../scene/heat';
 import type { BrainActivityEvent } from '../data/execution';
-import { buildStarfield, glowSprite, nebulaSprite, toward } from './sprites';
+import { buildStarfield, glowSprite, toward } from './sprites';
 import { FlowGraph2D } from './flowGraph2d';
 
 /**
@@ -67,7 +68,6 @@ export class Brain2D {
   private pos2 = new Map<string, { x: number; y: number }>();
   private stars: Star[] = [];
   private edges: Edge2[] = [];
-  private groupGeo: Array<{ id: string; label: string; color: string; x: number; y: number; radius: number; count: number; gi: number }> = [];
 
   // Interaction / view state.
   private kindsEnabled: Set<SynapseKind>;
@@ -91,6 +91,10 @@ export class Brain2D {
   private edgeBoost: number[] = [];
   /** Flash travel direction per edge: 1 = along the synapse, -1 = reversed. */
   private edgeBoostDir: number[] = [];
+  /** Per-flash tint override (hex string); null = the edge's resting colour. */
+  private edgeFlashColor: (string | null)[] = [];
+  /** Per-edge width multiplier from the usage heatmap. */
+  private widthMul: number[] = [];
   private followExec = true;
   private hudActivity: { flowId: string | null; detail?: string } | null = null;
   /** Chat output floating above the behaviour that produced it. */
@@ -100,7 +104,6 @@ export class Brain2D {
 
   // Eased visual state.
   private focusEase = 0; // 0 = overview, 1 = flow graph fully in
-  private nebulaDim = 1;
 
   // Pointer state.
   private pointers = new Map<number, { x: number; y: number }>();
@@ -155,7 +158,7 @@ export class Brain2D {
   /** (Re)build all group-dependent derived geometry. */
   private build(): void {
     this.grouping = groupNeurons(this.graph.neurons, this.groupMode);
-    const layout = computeSectionedLayout(this.graph, this.grouping, true);
+    const layout = computeBrainLayout(this.graph, this.grouping, true);
 
     this.pos2.clear();
     for (const [id, p] of layout.positions) this.pos2.set(id, { x: p.x, y: -p.y });
@@ -225,20 +228,9 @@ export class Brain2D {
     });
     this.edgeBoost = new Array(this.edges.length).fill(0);
     this.edgeBoostDir = new Array(this.edges.length).fill(1);
-
-    this.groupGeo = this.grouping.groups.map((g, gi) => {
-      const c = layout.centers.get(g.id)!;
-      return {
-        id: g.id,
-        label: g.label,
-        color: '#' + g.color.getHexString(),
-        x: c.x,
-        y: -c.y,
-        radius: layout.radii.get(g.id) ?? 4,
-        count: g.neuronIds.length,
-        gi,
-      };
-    });
+    this.edgeFlashColor = new Array(this.edges.length).fill(null);
+    // Bake accumulated usage heat into resting link widths.
+    this.widthMul = this.edges.map((e) => linkWidthMul(linkKey(e.synapse.source, e.synapse.target, e.synapse.kind)));
 
     this.dirty = true;
     this.needsDraw = true;
@@ -618,7 +610,10 @@ export class Brain2D {
         this.followTo(e.flowId);
         break;
       case 'subflow-start':
-        if (e.flowId && e.subflowId) this.flash(e.flowId, e.subflowId);
+        if (e.flowId && e.subflowId) {
+          fireLink(e.flowId, e.subflowId, 'subflow');
+          this.flash(e.flowId, e.subflowId);
+        }
         this.touchFlow(e.conversationId, e.subflowId ?? null);
         this.hudActivity = { flowId: e.subflowId ?? e.flowId };
         this.followTo(e.subflowId ?? null);
@@ -641,7 +636,11 @@ export class Brain2D {
         const ability = abilityForTool(this.graph, e.toolName);
         if (ability) {
           this.glow.set(ability.id, 1);
-          if (e.flowId) this.flash(e.flowId, ability.id);
+          fireNeuron(ability.id);
+          if (e.flowId) {
+            fireLink(e.flowId, ability.id, 'server');
+            this.flash(e.flowId, ability.id);
+          }
         }
         if (e.toolName) {
           // A transient pill over the acting behaviour: ⚙ server · tool.
@@ -650,6 +649,14 @@ export class Brain2D {
           this.bubbles.push(known ? e.flowId : null, '', `⚙ ${server ? `${server} · ` : ''}${tool}`, { pill: true });
         }
         this.hudActivity = { flowId: e.flowId, detail: e.toolName ? `tool ${e.toolName}` : undefined };
+        break;
+      }
+      case 'tool-result': {
+        // The reply travelling back from the ability — reverse flash, red on error.
+        const ability = abilityForTool(this.graph, e.toolName);
+        if (ability && e.flowId) {
+          this.flash(ability.id, e.flowId, e.isError ? { color: SYNAPSE_ERROR } : undefined);
+        }
         break;
       }
       case 'message':
@@ -671,7 +678,12 @@ export class Brain2D {
   private touchFlow(conversationId: string, flowId: string | null): void {
     if (!flowId || !this.graph.neurons.some((n) => n.id === flowId)) return;
     if (!this.convFlows.has(conversationId)) this.convFlows.set(conversationId, new Set());
-    this.convFlows.get(conversationId)!.add(flowId);
+    const active = this.convFlows.get(conversationId)!;
+    // One heat "fire" per behaviour per run it participates in (see Brain.touchFlow).
+    if (!active.has(flowId)) {
+      active.add(flowId);
+      fireNeuron(flowId);
+    }
     this.glow.set(flowId, 1);
   }
 
@@ -696,17 +708,24 @@ export class Brain2D {
     });
   }
 
-  /** Flash the synapse source -> target (a live behaviour call or tool use). */
-  private flash(sourceId: string, targetId: string): void {
+  /**
+   * Flash the synapse between two neurons; the pulse travels from -> to.
+   * `opts.color` overrides the tint (e.g. red for an errored tool result).
+   */
+  private flash(fromId: string, toId: string, opts: { color?: number } = {}): void {
     const i = this.edges.findIndex(
       (e) =>
-        (e.synapse.source === sourceId && e.synapse.target === targetId) ||
-        (!e.synapse.directed && e.synapse.source === targetId && e.synapse.target === sourceId),
+        (e.synapse.source === fromId && e.synapse.target === toId) ||
+        (e.synapse.source === toId && e.synapse.target === fromId),
     );
     if (i < 0) return;
     this.edgeBoost[i] = 1;
     // The pulse travels from the acting end toward the other.
-    this.edgeBoostDir[i] = this.edges[i].synapse.source === sourceId ? 1 : -1;
+    this.edgeBoostDir[i] = this.edges[i].synapse.source === fromId ? 1 : -1;
+    this.edgeFlashColor[i] = opts.color != null ? hexOf(opts.color) : null;
+    // Fresh traffic may have just bumped this link's heat — refresh its width.
+    const e = this.edges[i].synapse;
+    this.widthMul[i] = linkWidthMul(linkKey(e.source, e.target, e.kind));
   }
 
   private updateGlow(dt: number, t: number): void {
@@ -802,16 +821,16 @@ export class Brain2D {
       this.focusEase = focusTarget;
       this.needsDraw = true;
     }
-    const nebulaTarget = this.focusId && this.flowGraph ? 0.12 : 1;
-    this.nebulaDim += (nebulaTarget - this.nebulaDim) * Math.min(1, dt * 6);
 
     this.updateGlow(dt, t);
     let flashing = false;
     for (let i = 0; i < this.edgeBoost.length; i++) {
       if (this.edgeBoost[i] <= 0.01) continue;
       this.edgeBoost[i] *= Math.exp(-dt * 1.6);
-      if (this.edgeBoost[i] <= 0.01) this.edgeBoost[i] = 0;
-      else flashing = true;
+      if (this.edgeBoost[i] <= 0.01) {
+        this.edgeBoost[i] = 0;
+        this.edgeFlashColor[i] = null;
+      } else flashing = true;
     }
 
     if (this.dirty) {
@@ -867,22 +886,6 @@ export class Brain2D {
 
     ctx.globalCompositeOperation = 'lighter';
 
-    // Galaxy nebulae — layered soft tinted clouds.
-    for (const g of this.groupGeo) {
-      const sprite = nebulaSprite(g.color);
-      for (let k = 0; k < 4; k++) {
-        const rnd = (n: number) => ((((g.gi * 31 + k * 17 + n * 7) * 2654435761) % 1000) / 1000) - 0.5;
-        const spread = k === 0 ? 0 : g.radius * 0.6;
-        const x = g.x + rnd(0) * spread * 2;
-        const y = g.y - rnd(1) * spread * 1.4;
-        const size = (k === 0 ? g.radius * 2.6 + 8 : g.radius * (1.1 + (rnd(4) + 0.5) * 0.9) + 4) * cam.s;
-        if (size < 6 || !onScreen(x, y, size / cam.s / 2)) continue;
-        const [sx, sy] = this.w2s(x, y);
-        ctx.globalAlpha = (k === 0 ? 0.14 : 0.08) * this.nebulaDim;
-        ctx.drawImage(sprite, sx - size / 2, sy - size / 2, size, size);
-      }
-    }
-
     // Synapses: quadratic filaments, alpha carrying the spotlight intensity.
     for (let i = 0; i < this.edges.length; i++) {
       const m = this.edgeM[i] + this.edgeBoost[i] * 1.2;
@@ -892,9 +895,10 @@ export class Brain2D {
       const [ax, ay] = this.w2s(e.ax, e.ay);
       const [bx, by] = this.w2s(e.bx, e.by);
       const [ex, ey] = this.w2s(e.cx, e.cy);
+      const flashCol = this.edgeBoost[i] > 0.01 ? this.edgeFlashColor[i] : null;
       ctx.globalAlpha = Math.min(1, m * 0.8 * (1 - e.fade * 0.55));
-      ctx.strokeStyle = e.color;
-      ctx.lineWidth = (e.synapse.kind === 'subflow' ? 1.5 : 1.05) + this.edgeBoost[i] * 1.6;
+      ctx.strokeStyle = flashCol ?? e.color;
+      ctx.lineWidth = ((e.synapse.kind === 'subflow' ? 1.5 : 1.05) + this.edgeBoost[i] * 1.6) * this.widthMul[i];
       ctx.beginPath();
       ctx.moveTo(ax, ay);
       ctx.quadraticCurveTo(ex, ey, bx, by);
@@ -917,7 +921,7 @@ export class Brain2D {
       if (!onScreen(px, py)) continue;
       const [sx, sy] = this.w2s(px, py);
       ctx.globalAlpha = Math.min(1, boost * 1.4);
-      ctx.drawImage(glowSprite(e.color), sx - pulseSize / 2, sy - pulseSize / 2, pulseSize, pulseSize);
+      ctx.drawImage(glowSprite(this.edgeFlashColor[i] ?? e.color), sx - pulseSize / 2, sy - pulseSize / 2, pulseSize, pulseSize);
     }
 
     // Satellites: each behaviour's internal nodes, as faint dots.
@@ -943,9 +947,10 @@ export class Brain2D {
       const boost = this.focusId === st.neuron.id && this.flowGraph ? 0 : this.glow.get(st.neuron.id) ?? 0;
       const alpha = (this.starAlpha[i] + boost * 0.9) * (0.82 + 0.18 * Math.sin(t * 1.3 + st.phase));
       if (alpha <= 0.015) continue;
-      if (!onScreen(st.x, st.y, st.r * 3)) continue;
+      const heat = neuronSizeMul(st.neuron.id);
+      if (!onScreen(st.x, st.y, st.r * heat * 3)) continue;
       const [sx, sy] = this.w2s(st.x, st.y);
-      const d = st.r * 2.9 * cam.s * (1 + boost * 0.35);
+      const d = st.r * heat * 2.9 * cam.s * (1 + boost * 0.35);
       ctx.globalAlpha = Math.min(1, alpha);
       ctx.drawImage(glowSprite(st.color), sx - d / 2, sy - d / 2, d, d);
       if (boost > 0.02) {
@@ -982,27 +987,6 @@ export class Brain2D {
         ctx.shadowColor = 'rgba(0,0,0,0.9)';
         ctx.shadowBlur = 6;
         ctx.fillText(st.neuron.name, sx, sy + d * 0.34 + 14);
-        ctx.shadowBlur = 0;
-      }
-    }
-
-    // Section labels above each galaxy.
-    const labelAlpha = 1 - this.focusEase;
-    if (labelAlpha > 0.02 && this.groupGeo.length > 1) {
-      for (const g of this.groupGeo) {
-        const y = g.y - g.radius - 3;
-        if (!onScreen(g.x, y, 6)) continue;
-        const [sx, sy] = this.w2s(g.x, y);
-        ctx.globalAlpha = labelAlpha;
-        ctx.shadowColor = 'rgba(0,0,0,0.9)';
-        ctx.shadowBlur = 8;
-        ctx.font = '600 13px Inter, "Segoe UI", system-ui, sans-serif';
-        ctx.fillStyle = toward(g.color, '#ffffff', 0.35);
-        ctx.fillText(g.label, sx, sy - 14);
-        ctx.font = '400 10px Inter, "Segoe UI", system-ui, sans-serif';
-        ctx.fillStyle = '#8a97bf';
-        const noun = g.id === ABILITY_GROUP ? (g.count === 1 ? 'ability' : 'abilities') : (g.count === 1 ? 'behaviour' : 'behaviours');
-        ctx.fillText(`${g.count} ${noun}`, sx, sy);
         ctx.shadowBlur = 0;
       }
     }

@@ -1,7 +1,6 @@
 import { CanvasTexture, Texture } from 'three';
 
 let glowCache: Texture | null = null;
-let nebulaCache: Texture | null = null;
 
 function radial(size: number, stops: Array<[number, number]>): Texture {
   const c = document.createElement('canvas');
@@ -22,16 +21,6 @@ export function glowTexture(): Texture {
     [0.16, 0.75],
     [0.42, 0.22],
     [0.75, 0.05],
-    [1, 0],
-  ]));
-}
-
-/** Very soft wide falloff for galaxy nebula clouds. */
-export function nebulaTexture(): Texture {
-  return (nebulaCache ??= radial(256, [
-    [0, 0.5],
-    [0.35, 0.22],
-    [0.7, 0.07],
     [1, 0],
   ]));
 }

@@ -18,15 +18,26 @@ export interface NodeRef {
 }
 
 export interface BrainActivityEvent {
-  kind: 'run-start' | 'node-enter' | 'node-exit' | 'subflow-start' | 'subflow-done' | 'tool-call' | 'message' | 'run-done';
+  kind:
+    | 'run-start'
+    | 'node-enter'
+    | 'node-exit'
+    | 'subflow-start'
+    | 'subflow-done'
+    | 'tool-call'
+    | 'tool-result'
+    | 'message'
+    | 'run-done';
   conversationId: string;
   /** The behaviour (flow id) the event belongs to, resolved via the depth stack. */
   flowId: string | null;
   node?: NodeRef;
   /** subflow-start / subflow-done: the called behaviour. */
   subflowId?: string;
-  /** tool-call: the tool's name ("<server>__<tool>" on the agent-SDK path, "-_-_-"-joined legacy). */
+  /** tool-call / tool-result: the tool's name ("<server>__<tool>" on the agent-SDK path, "-_-_-"-joined legacy). */
   toolName?: string;
+  /** tool-result: the tool call failed (drives the red return flash). */
+  isError?: boolean;
   /** message: the assistant's chat output text. */
   text?: string;
 }
@@ -49,6 +60,8 @@ interface RawEvent {
   subflowName?: string;
   name?: string;
   status?: string;
+  /** tool:result: the tool call failed. */
+  isError?: boolean;
   /** tool:call: the model-issued tool call id (also on the persisted message). */
   toolCallId?: string;
   /** message: a FlujoChatMessage (OpenAI message + id/timestamp/processNodeId). */
@@ -233,6 +246,18 @@ export class ExecutionWatcher {
       case 'tool:call':
         if (ev.toolCallId && !this.freshTool(id, ev.toolCallId)) break;
         this.onEvent({ kind: 'tool-call', conversationId: id, flowId: flowAt(depth), node: ev.node, toolName: ev.name });
+        break;
+      case 'tool:result':
+        // The tool's reply travelling back to the behaviour. Fires once per
+        // call (no dedupe needed); isError drives the red return flash.
+        this.onEvent({
+          kind: 'tool-result',
+          conversationId: id,
+          flowId: flowAt(depth),
+          node: ev.node,
+          toolName: ev.name,
+          isError: ev.isError,
+        });
         break;
       case 'message': {
         // Assistant activity only — user turns and tool results stay

@@ -4,15 +4,18 @@ import {
   Color,
   DynamicDrawUsage,
   Float32BufferAttribute,
-  LineBasicMaterial,
-  LineSegments,
+  InstancedBufferAttribute,
   Points,
   PointsMaterial,
   Vector3,
 } from 'three';
+import { LineSegments2 } from 'three/addons/lines/LineSegments2.js';
+import { LineSegmentsGeometry } from 'three/addons/lines/LineSegmentsGeometry.js';
+import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
 import type { BrainGraph, Synapse, SynapseKind } from '../types';
 import { SYNAPSE_COLORS } from '../theme';
 import { glowTexture } from './textures';
+import { linkKey, linkWidthMul } from './heat';
 
 /** Curve segments per synapse — enough for a smooth arc, cheap to draw. */
 const SEG = 22;
@@ -28,11 +31,31 @@ interface Edge {
   color: Color;
 }
 
+export interface FlashOpts {
+  /** Override the flash tint (e.g. red for an errored tool result). */
+  color?: number | Color;
+}
+
+/**
+ * All synapses as one fat-line draw plus a pulse layer.
+ *
+ * Lines use three's Line2 family (LineSegments2/LineMaterial) rather than the
+ * built-in LineSegments, because WebGL ignores LineBasicMaterial.linewidth —
+ * genuine per-link thickness (driven by the usage heatmap) is only possible
+ * with the screen-space fat-line shader. Width is injected per segment via a
+ * small onBeforeCompile patch (see buildMaterial).
+ */
 export class SynapseField {
-  readonly lines: LineSegments;
+  readonly lines: LineSegments2;
   readonly pulses: Points;
   readonly edges: Edge[] = [];
-  private lineColors: Float32BufferAttribute;
+  private material: LineMaterial;
+  /** Backing store for instanceColorStart/End (6 floats per segment). */
+  private colorArray: Float32Array;
+  private colorAttr: { needsUpdate: boolean };
+  /** Per-segment width multiplier (heat + flash). */
+  private widthArray: Float32Array;
+  private widthAttr: InstancedBufferAttribute;
   private pulseColors: Float32BufferAttribute;
   private pulsePos: Float32BufferAttribute;
   readonly adjacency = new Map<string, Set<number>>();
@@ -41,6 +64,8 @@ export class SynapseField {
   private boosts!: Float32Array;
   /** Flash travel direction: 1 = along the synapse, -1 = reversed. */
   private flashDir!: Float32Array;
+  /** Per-flash tint override; null = the edge's resting colour. */
+  private flashColor: (Color | null)[] = [];
   private lastTime = 0;
   // Last recolor() inputs, so flashes can re-derive an edge's resting colour.
   private lastActive: Set<number> | null = null;
@@ -107,15 +132,33 @@ export class SynapseField {
       }
     });
 
-    const lineGeo = new BufferGeometry();
-    lineGeo.setAttribute('position', new Float32BufferAttribute(linePos, 3));
-    this.lineColors = new Float32BufferAttribute(new Float32Array(this.edges.length * SEG * 6), 3);
-    this.lineColors.setUsage(DynamicDrawUsage);
-    lineGeo.setAttribute('color', this.lineColors);
-    this.lines = new LineSegments(
-      lineGeo,
-      new LineBasicMaterial({ vertexColors: true, transparent: true, blending: AdditiveBlending, opacity: 0.8, depthWrite: false }),
-    );
+    const segCount = this.edges.length * SEG;
+
+    const lineGeo = new LineSegmentsGeometry();
+    lineGeo.setPositions(linePos);
+    this.colorArray = new Float32Array(segCount * 6);
+    lineGeo.setColors(this.colorArray);
+    // Colours are rewritten every frame a flash decays — mark the shared
+    // interleaved buffer dynamic and keep a handle to flag it dirty.
+    const colorStart = lineGeo.getAttribute('instanceColorStart') as unknown as {
+      needsUpdate: boolean;
+      data: { setUsage: (u: number) => void };
+    };
+    colorStart.data.setUsage(DynamicDrawUsage);
+    this.colorAttr = colorStart;
+
+    // Per-segment width multiplier (one LineSegments2 instance == one segment).
+    this.widthArray = new Float32Array(segCount).fill(1);
+    this.widthAttr = new InstancedBufferAttribute(this.widthArray, 1);
+    this.widthAttr.setUsage(DynamicDrawUsage);
+    lineGeo.setAttribute('instanceWidth', this.widthAttr);
+    lineGeo.computeBoundingSphere();
+
+    this.material = this.buildMaterial();
+    this.lines = new LineSegments2(lineGeo, this.material);
+    this.lines.computeLineDistances();
+    // The brain is always on screen; skip per-frame culling of the one big mesh.
+    this.lines.frustumCulled = false;
 
     const pulseGeo = new BufferGeometry();
     this.pulsePos = new Float32BufferAttribute(new Float32Array(pulseP), 3);
@@ -136,6 +179,44 @@ export class SynapseField {
         sizeAttenuation: true,
       }),
     );
+
+    this.boosts = new Float32Array(this.edges.length);
+    this.flashDir = new Float32Array(this.edges.length);
+    this.flashColor = new Array(this.edges.length).fill(null);
+    // Bake the accumulated usage heatmap into resting link widths.
+    for (let i = 0; i < this.edges.length; i++) this.applyWidth(i);
+  }
+
+  private buildMaterial(): LineMaterial {
+    const mat = new LineMaterial({
+      vertexColors: true,
+      transparent: true,
+      blending: AdditiveBlending,
+      depthWrite: false,
+      linewidth: 2.4, // base device-pixel width; heat scales it per segment
+    });
+    mat.resolution.set(window.innerWidth, window.innerHeight);
+    // Inject a per-segment width multiplier. `instanceWidth` rides along the
+    // same instancing as instanceStart/End, so one value covers a whole
+    // segment. Patch both the screen-space (default) and world-units paths.
+    mat.onBeforeCompile = (shader) => {
+      const before = shader.vertexShader;
+      shader.vertexShader = shader.vertexShader
+        .replace('attribute vec3 instanceStart;', 'attribute vec3 instanceStart;\n\t\tattribute float instanceWidth;')
+        .replace('offset *= linewidth;', 'offset *= linewidth * instanceWidth;')
+        .replace('float hw = linewidth * 0.5;', 'float hw = linewidth * 0.5 * instanceWidth;');
+      if ((import.meta as { env?: { DEV?: boolean } }).env?.DEV && shader.vertexShader === before) {
+        // The stock LineMaterial shader changed — width injection is a no-op.
+        console.error('[synapses] fat-line width patch did not apply; check three.js version');
+      }
+    };
+    mat.customProgramCacheKey = () => 'synapse-fatline-v1';
+    return mat;
+  }
+
+  /** Keep fat-line widths correct in screen space; call on every resize. */
+  setResolution(width: number, height: number): void {
+    this.material.resolution.set(width, height);
   }
 
   private baseDim(e: Edge, kinds: Set<SynapseKind>): number {
@@ -151,23 +232,40 @@ export class SynapseField {
     return m;
   }
 
-  /** Write one edge's line + pulse colours at intensity `m`. */
+  /** Write one segment-block of line + this edge's pulse colours at intensity `m`. */
   private writeEdge(i: number, m: number): void {
-    const lc = this.lineColors.array as Float32Array;
+    const lc = this.colorArray;
     const pc = this.pulseColors.array as Float32Array;
     const e = this.edges[i];
+    // A live flash can retint the boosted contribution (e.g. red on error).
+    const flashing = this.boosts[i] > 0.01 && this.flashColor[i] ? this.flashColor[i]! : e.color;
+    const boost = this.boosts[i] * 1.2;
     const base = i * SEG * 6;
     for (let j = 0; j < SEG; j++) {
+      // Blend resting colour (m) with the flash tint (boost) per endpoint.
       const iA = m * e.profile[j];
       const iB = m * e.profile[j + 1];
       const o = base + j * 6;
-      lc[o] = e.color.r * iA; lc[o + 1] = e.color.g * iA; lc[o + 2] = e.color.b * iA;
-      lc[o + 3] = e.color.r * iB; lc[o + 4] = e.color.g * iB; lc[o + 5] = e.color.b * iB;
+      lc[o] = e.color.r * iA + flashing.r * boost;
+      lc[o + 1] = e.color.g * iA + flashing.g * boost;
+      lc[o + 2] = e.color.b * iA + flashing.b * boost;
+      lc[o + 3] = e.color.r * iB + flashing.r * boost;
+      lc[o + 4] = e.color.g * iB + flashing.g * boost;
+      lc[o + 5] = e.color.b * iB + flashing.b * boost;
     }
     // Pulses are interaction-only: they light up with an execution flash
-    // (subflow handoff, tool call) and vanish with it — no ambient traffic.
-    const pm = (this.boosts ? this.boosts[i] : 0) * 2.0;
-    pc[i * 3] = e.color.r * pm; pc[i * 3 + 1] = e.color.g * pm; pc[i * 3 + 2] = e.color.b * pm;
+    // (subflow handoff, tool call, tool result) and vanish with it.
+    const pm = this.boosts[i] * 2.0;
+    pc[i * 3] = flashing.r * pm; pc[i * 3 + 1] = flashing.g * pm; pc[i * 3 + 2] = flashing.b * pm;
+  }
+
+  /** Set an edge's segment widths from its accumulated heat. */
+  private applyWidth(i: number): void {
+    const e = this.edges[i];
+    const w = linkWidthMul(linkKey(e.synapse.source, e.synapse.target, e.synapse.kind));
+    const base = i * SEG;
+    for (let j = 0; j < SEG; j++) this.widthArray[base + j] = w;
+    this.widthAttr.needsUpdate = true;
   }
 
   /**
@@ -179,25 +277,28 @@ export class SynapseField {
     this.lastActive = active;
     this.lastKinds = kinds;
     this.lastFocus = focusMode;
-    if (!this.boosts || this.boosts.length !== this.edges.length) this.boosts = new Float32Array(this.edges.length);
-    for (let i = 0; i < this.edges.length; i++) this.writeEdge(i, this.restingM(i) + this.boosts[i] * 1.2);
-    this.lineColors.needsUpdate = true;
+    for (let i = 0; i < this.edges.length; i++) this.writeEdge(i, this.restingM(i));
+    this.colorAttr.needsUpdate = true;
     this.pulseColors.needsUpdate = true;
   }
 
-  /** Flash the synapse source -> target (a live behaviour call or tool use). */
-  flash(sourceId: string, targetId: string): void {
+  /**
+   * Flash the synapse between two neurons; the pulse travels from -> to.
+   * `opts.color` overrides the tint (e.g. red for an errored tool result).
+   */
+  flash(fromId: string, toId: string, opts: FlashOpts = {}): void {
     const i = this.edges.findIndex(
       (e) =>
-        (e.synapse.source === sourceId && e.synapse.target === targetId) ||
-        (!e.synapse.directed && e.synapse.source === targetId && e.synapse.target === sourceId),
+        (e.synapse.source === fromId && e.synapse.target === toId) ||
+        (e.synapse.source === toId && e.synapse.target === fromId),
     );
     if (i < 0) return;
-    if (!this.boosts || this.boosts.length !== this.edges.length) this.boosts = new Float32Array(this.edges.length);
-    if (!this.flashDir || this.flashDir.length !== this.edges.length) this.flashDir = new Float32Array(this.edges.length);
     this.boosts[i] = 1;
     // The pulse travels from the acting end toward the other.
-    this.flashDir[i] = this.edges[i].synapse.source === sourceId ? 1 : -1;
+    this.flashDir[i] = this.edges[i].synapse.source === fromId ? 1 : -1;
+    this.flashColor[i] = opts.color != null ? new Color(opts.color) : null;
+    // Fresh traffic may have just bumped this link's heat — refresh its width.
+    this.applyWidth(i);
   }
 
   /** Decay execution flashes and move their pulses. Cheap; call every frame. */
@@ -213,8 +314,11 @@ export class SynapseField {
     for (let i = 0; i < this.boosts.length; i++) {
       if (this.boosts[i] <= 0.01) continue;
       this.boosts[i] *= Math.exp(-dt * 1.6);
-      if (this.boosts[i] <= 0.01) this.boosts[i] = 0;
-      this.writeEdge(i, this.restingM(i) + this.boosts[i] * 1.2);
+      if (this.boosts[i] <= 0.01) {
+        this.boosts[i] = 0;
+        this.flashColor[i] = null;
+      }
+      this.writeEdge(i, this.restingM(i));
 
       const along = 1 - this.boosts[i];
       const f = this.flashDir[i] >= 0 ? along : 1 - along;
@@ -228,7 +332,7 @@ export class SynapseField {
       touched = true;
     }
     if (touched) {
-      this.lineColors.needsUpdate = true;
+      this.colorAttr.needsUpdate = true;
       this.pulseColors.needsUpdate = true;
       this.pulsePos.needsUpdate = true;
     }

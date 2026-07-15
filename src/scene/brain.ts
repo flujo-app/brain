@@ -10,33 +10,25 @@ import {
   WebGLRenderer,
 } from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
-import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
-import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 
 import type { BrainGraph, Neuron, NodeChatMessage, SynapseKind } from '../types';
 import { abilityForTool, splitToolName } from '../data/distill';
-import { BACKGROUND, nodeTypeLabel } from '../theme';
+import { BACKGROUND, SYNAPSE_ERROR, nodeTypeLabel } from '../theme';
 import { groupNeurons, type GroupMode } from '../grouping';
-import { computeSectionedLayout, type SectionedLayout } from '../layout/sectionedLayout';
-import { createStarfield } from './starfield';
-import { createNebulae, setNebulaeDim } from './nebula';
-import { FlowNodeLabels, SectionLabels } from './labels';
+import { computeBrainLayout, type BrainLayout } from '../layout/brainLayout';
+import { FlowNodeLabels } from './labels';
 import { FlowGraph } from './flowGraph';
-import { StarField } from './stars';
+import { NeuronField } from './neurons';
 import { SynapseField } from './synapses';
+import { fireLink, fireNeuron } from './heat';
 import type { Hud, RelationLine } from '../ui/hud';
 import { ChatBubbleLayer } from '../ui/bubbles';
 import type { BrainActivityEvent } from '../data/execution';
 
 const FOV = 55;
-const BLOOM_OVERVIEW = 0.32;
-const BLOOM_FOCUS = 0.08;
 
 export class Brain {
   private renderer: WebGLRenderer;
-  private composer: EffectComposer;
-  private bloom: UnrealBloomPass;
   private scene = new Scene();
   private camera: PerspectiveCamera;
   private controls: OrbitControls;
@@ -47,11 +39,9 @@ export class Brain {
 
   // Rebuildable content (regenerated when grouping mode or data changes).
   private content = new Group();
-  private stars!: StarField;
+  private neurons!: NeuronField;
   private synapses!: SynapseField;
-  private layout!: SectionedLayout;
-  private labels?: SectionLabels;
-  private nebulae!: Group;
+  private layout!: BrainLayout;
 
   // Focused-behaviour graph view.
   private flowGraph: FlowGraph | null = null;
@@ -85,7 +75,6 @@ export class Brain {
   private camGoal: Vector3 | null = null;
   private focusLerp = 1;
   private overviewDist = 100;
-  private bloomTarget = BLOOM_OVERVIEW;
 
   private onWindowResize = () => this.resize();
   private onKeyDown = (e: KeyboardEvent) => {
@@ -112,18 +101,10 @@ export class Brain {
     this.controls.screenSpacePanning = true;
 
     // Subtle depth cue only — the 2D view has no haze at all, and heavy fog
-    // reads as murk rather than depth. The background starfield opts out.
+    // reads as murk rather than depth.
     this.scene.fog = new FogExp2(BACKGROUND, 0.001);
 
-    this.scene.add(createStarfield(1600, 900));
     this.scene.add(this.content);
-
-    this.composer = new EffectComposer(this.renderer);
-    this.composer.addPass(new RenderPass(this.scene, this.camera));
-    this.bloom = new UnrealBloomPass(new Vector2(1, 1), BLOOM_OVERVIEW, 0.4, 0.55);
-    this.composer.addPass(this.bloom);
-
-    this.raycaster.params.Points = { threshold: 2.6 };
 
     this.build();
     this.resize();
@@ -155,7 +136,6 @@ export class Brain {
     window.removeEventListener('keydown', this.onKeyDown);
     this.clearContent();
     this.controls.dispose();
-    this.composer.dispose();
     this.renderer.dispose();
     this.renderer.forceContextLoss();
     this.bubbles.dispose();
@@ -176,22 +156,13 @@ export class Brain {
   private build(): void {
     this.clearContent();
     const grouping = groupNeurons(this.graph.neurons, this.groupMode);
-    this.layout = computeSectionedLayout(this.graph, grouping);
+    this.layout = computeBrainLayout(this.graph, grouping);
 
-    this.stars = new StarField(this.graph, grouping, this.layout);
+    this.neurons = new NeuronField(this.graph, grouping, this.layout);
     this.synapses = new SynapseField(this.graph, this.layout.positions);
-    this.labels = new SectionLabels(grouping, this.layout);
-    this.nebulae = createNebulae(grouping, this.layout);
 
-    this.content.add(
-      this.nebulae,
-      this.synapses.lines,
-      this.synapses.pulses,
-      this.stars.satellites,
-      this.stars.cores,
-    );
+    this.content.add(this.synapses.lines, this.synapses.pulses, this.neurons.object);
 
-    this.stars.setScale(this.renderer.domElement.height, FOV);
     this.synapses.recolor(null, this.kindsEnabled);
     this.dirty = true;
   }
@@ -214,8 +185,6 @@ export class Brain {
 
   private clearContent(): void {
     this.clearFlowGraph();
-    this.labels?.dispose();
-    this.labels = undefined;
     for (const child of [...this.content.children]) {
       this.content.remove(child);
       child.traverse?.((o) => {
@@ -241,18 +210,15 @@ export class Brain {
     // side dims a few percent) so the view stays as crisp as the 2D renderer.
     const density = 0.15 / dist;
     (this.scene.fog as FogExp2).density = density;
-    this.stars.setFog(density);
   }
 
   private resize(): void {
     const w = window.innerWidth;
     const h = window.innerHeight;
     this.renderer.setSize(w, h);
-    this.composer.setSize(w, h);
-    this.bloom.setSize(w / 2, h / 2); // half-res bloom — cheaper, still smooth
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
-    this.stars?.setScale(this.renderer.domElement.height, FOV);
+    this.synapses?.setResolution(w, h); // fat lines need the viewport size
   }
 
   private wireHud(): void {
@@ -288,7 +254,6 @@ export class Brain {
     this.build();
     this.frameCameraToBrain();
     this.controls.autoRotate = true;
-    this.bloomTarget = BLOOM_OVERVIEW;
   }
 
   private wireInput(): void {
@@ -333,9 +298,7 @@ export class Brain {
 
   private pickCore(): string | null {
     this.raycaster.setFromCamera(this.pointer, this.camera);
-    const hits = this.raycaster.intersectObject(this.stars.cores, false);
-    if (!hits.length || hits[0].index == null) return null;
-    return this.stars.neuronAt(hits[0].index)?.id ?? null;
+    return this.neurons.pick(this.raycaster);
   }
 
   private neighboursOf(id: string): Set<string> {
@@ -375,19 +338,10 @@ export class Brain {
 
     this.clearFlowGraph();
     let dist = 26;
-    if (isAbility) {
-      // Abilities have no inner graph — spotlight the star where it lives,
-      // galaxy clouds and section names stay up.
-      this.bloomTarget = BLOOM_OVERVIEW;
-      setNebulaeDim(this.nebulae, 1);
-      this.labels?.setHidden(false);
-    } else {
-      this.bloomTarget = BLOOM_FOCUS;
-      // Clear the stage: galaxy clouds and section names recede behind the graph.
-      setNebulaeDim(this.nebulae, 0.12);
-      this.labels?.setHidden(true);
-
-      // Replace the glowing star with the behaviour's actual graph, oriented
+    if (!isAbility) {
+      // Abilities have no inner graph — just spotlight the neuron where it
+      // lives. A behaviour opens its actual flow graph in place.
+      // Replace the glowing neuron with the behaviour's actual graph, oriented
       // toward the camera, then fly in to frame it head-on.
       this.flowGraph = new FlowGraph(neuron, this.graph.servers);
       this.flowGraph.group.position.copy(home);
@@ -456,9 +410,6 @@ export class Brain {
     this.searchSet = null;
     this.selectedNodeId = null;
     this.controls.autoRotate = true;
-    this.bloomTarget = BLOOM_OVERVIEW;
-    setNebulaeDim(this.nebulae, 1);
-    this.labels?.setHidden(false);
     this.clearFlowGraph();
     this.hud.hidePanel();
     this.targetLookAt.set(0, 0, 0);
@@ -484,7 +435,10 @@ export class Brain {
         this.followTo(e.flowId);
         break;
       case 'subflow-start':
-        if (e.flowId && e.subflowId) this.synapses.flash(e.flowId, e.subflowId);
+        if (e.flowId && e.subflowId) {
+          fireLink(e.flowId, e.subflowId, 'subflow');
+          this.synapses.flash(e.flowId, e.subflowId);
+        }
         this.touchFlow(e.conversationId, e.subflowId ?? null);
         this.hudActivity = { flowId: e.subflowId ?? e.flowId };
         this.followTo(e.subflowId ?? null);
@@ -506,7 +460,11 @@ export class Brain {
         const ability = abilityForTool(this.graph, e.toolName);
         if (ability) {
           this.glow.set(ability.id, 1);
-          if (e.flowId) this.synapses.flash(e.flowId, ability.id);
+          fireNeuron(ability.id);
+          if (e.flowId) {
+            fireLink(e.flowId, ability.id, 'server');
+            this.synapses.flash(e.flowId, ability.id);
+          }
         }
         if (e.toolName) {
           // A transient pill over the acting behaviour: ⚙ server · tool.
@@ -515,6 +473,15 @@ export class Brain {
           this.bubbles.push(known ? e.flowId : null, '', `⚙ ${server ? `${server} · ` : ''}${tool}`, { pill: true });
         }
         this.hudActivity = { flowId: e.flowId, detail: e.toolName ? `tool ${e.toolName}` : undefined };
+        break;
+      }
+      case 'tool-result': {
+        // The reply travelling back from the ability to the behaviour — flash
+        // the reverse direction, burning red when the tool errored.
+        const ability = abilityForTool(this.graph, e.toolName);
+        if (ability && e.flowId) {
+          this.synapses.flash(ability.id, e.flowId, e.isError ? { color: SYNAPSE_ERROR } : undefined);
+        }
         break;
       }
       case 'message':
@@ -537,7 +504,14 @@ export class Brain {
   private touchFlow(conversationId: string, flowId: string | null): void {
     if (!flowId || !this.graph.neurons.some((n) => n.id === flowId)) return;
     if (!this.convFlows.has(conversationId)) this.convFlows.set(conversationId, new Set());
-    this.convFlows.get(conversationId)!.add(flowId);
+    const active = this.convFlows.get(conversationId)!;
+    // Count one heat "fire" per behaviour per run it takes part in — not per
+    // node — so a chatty flow doesn't out-heat a busy one. subflow/run-done
+    // clear the set, so a re-invocation in the same conversation recounts.
+    if (!active.has(flowId)) {
+      active.add(flowId);
+      fireNeuron(flowId);
+    }
     this.glow.set(flowId, 1);
   }
 
@@ -582,9 +556,9 @@ export class Brain {
     if (this.focusId && this.flowGraph && this.glow.has(this.focusId)) {
       const masked = new Map(this.glow);
       masked.delete(this.focusId);
-      this.stars.setBoost(masked);
+      this.neurons.setBoost(masked);
     } else {
-      this.stars.setBoost(this.glow);
+      this.neurons.setBoost(this.glow);
     }
   }
 
@@ -660,7 +634,6 @@ export class Brain {
     const dt = this.clock.getDelta();
     const t = this.clock.elapsedTime;
     this.controls.update();
-    this.stars.setTime(t);
     this.synapses.animate(t);
     this.updateGlow(dt, t);
     this.updateHover();
@@ -669,9 +642,6 @@ export class Brain {
       this.applySpotlight();
       this.dirty = false;
     }
-
-    // Ease bloom between the dreamy overview and the crisp focus view.
-    this.bloom.strength += (this.bloomTarget - this.bloom.strength) * Math.min(1, dt * 3);
 
     // Fly the orbit pivot and camera toward the current goal.
     if (this.focusLerp < 1) {
@@ -683,7 +653,6 @@ export class Brain {
       }
     }
 
-    this.labels?.update(this.camera, window.innerWidth, window.innerHeight);
     this.flowLabels?.update(this.camera, window.innerWidth, window.innerHeight);
     this.bubbles.update((flowId) => {
       const pos = this.layout.positions.get(flowId);
@@ -695,7 +664,7 @@ export class Brain {
         y: (-this.bubbleV.y * 0.5 + 0.5) * window.innerHeight,
       };
     });
-    this.composer.render();
+    this.renderer.render(this.scene, this.camera);
   }
 
   private applySpotlight(): void {
@@ -717,7 +686,7 @@ export class Brain {
     // A focused ability has no flow graph — treat it like a bright hover
     // instead of hiding the star and receding the web.
     const graphOpen = this.flowGraph !== null;
-    this.stars.spotlight(visible, focus, graphOpen);
+    this.neurons.spotlight(visible, focus, graphOpen);
     this.synapses.recolor(active, this.kindsEnabled, graphOpen);
   }
 }

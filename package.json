@@ -20,12 +20,12 @@
   ],
   "license": "MIT",
   "devDependencies": {
-    "@types/three": "^0.169.0",
+    "@types/three": "0.169.0",
     "typescript": "^5.5.4",
     "vite": "^5.4.0"
   },
   "dependencies": {
-    "three": "^0.169.0"
+    "three": "0.169.0"
   },
   "allowScripts": {
     "esbuild@0.21.5": true
