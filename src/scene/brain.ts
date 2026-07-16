@@ -12,8 +12,8 @@ import {
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
 import type { BrainGraph, Neuron, NodeChatMessage, SynapseKind } from '../types';
-import { abilityForTool, splitToolName } from '../data/distill';
-import { BACKGROUND, SYNAPSE_ERROR, nodeTypeLabel } from '../theme';
+import { abilityForTool, splitToolName, resourceNeuronFor } from '../data/distill';
+import { BACKGROUND, SYNAPSE_ERROR, SYNAPSE_COLORS, nodeTypeLabel } from '../theme';
 import { groupNeurons, type GroupMode } from '../grouping';
 import { computeBrainLayout, type BrainLayout } from '../layout/brainLayout';
 import { FlowNodeLabels } from './labels';
@@ -484,6 +484,30 @@ export class Brain {
         }
         break;
       }
+      case 'resource-read':
+      case 'resource-write': {
+        // A memory being recalled or written (Tier 3). Glow the memory neuron
+        // (falling back to the owning ability hub, e.g. ability:flujo for run
+        // artifacts without a declared memory node) and pulse the synapse —
+        // read: memory → behaviour; write: behaviour → memory.
+        this.touchFlow(e.conversationId, e.flowId);
+        const read = e.kind === 'resource-read';
+        const res = resourceNeuronFor(this.graph, e.server, e.uri, e.resourceName);
+        if (res) {
+          this.glow.set(res.id, 1);
+          fireNeuron(res.id);
+          if (e.flowId) {
+            const [from, to] = read ? [res.id, e.flowId] : [e.flowId, res.id];
+            fireLink(from, to, 'resource');
+            this.synapses.flash(from, to, { color: SYNAPSE_COLORS.resource });
+          }
+        }
+        const label = e.resourceName ?? e.uri?.split('/').pop() ?? 'memory';
+        const known = e.flowId && this.graph.neurons.some((n) => n.id === e.flowId);
+        this.bubbles.push(known ? e.flowId : null, '', `${read ? '▤' : '▤✎'} ${label}`, { pill: true });
+        this.hudActivity = { flowId: e.flowId, detail: `${read ? 'reads' : 'writes'} memory ${label}` };
+        break;
+      }
       case 'message':
         this.touchFlow(e.conversationId, e.flowId);
         if (e.text) {
@@ -621,7 +645,11 @@ export class Brain {
     if (id) {
       const n = this.graph.neurons.find((x) => x.id === id)!;
       this.hud.showTooltip(
-        n.kind === 'ability' ? `${n.name} · ability · ${this.graph.servers[n.name] ?? 'unknown'}` : `${n.name} · ${n.nodeTotal} nodes`,
+        n.kind === 'ability'
+          ? `${n.name} · ability · ${this.graph.servers[n.name] ?? 'unknown'}`
+          : n.kind === 'resource'
+            ? `${n.name} · memory${n.uri ? ` · ${n.uri}` : ''}`
+            : `${n.name} · ${n.nodeTotal} nodes`,
         (this.pointer.x * 0.5 + 0.5) * window.innerWidth,
         (-this.pointer.y * 0.5 + 0.5) * window.innerHeight,
       );

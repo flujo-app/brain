@@ -11,7 +11,13 @@ import type {
   Synapse,
 } from '../types';
 
-const NODE_TYPES: NodeType[] = ['start', 'process', 'finish', 'mcp', 'subflow'];
+const NODE_TYPES: NodeType[] = ['start', 'process', 'finish', 'mcp', 'subflow', 'resource'];
+
+/** One zeroed per-type counter — the single authority so a new NodeType can't
+ * silently miss an initializer. */
+function zeroCounts(): Record<NodeType, number> {
+  return { start: 0, process: 0, finish: 0, mcp: 0, subflow: 0, resource: 0 };
+}
 
 /** The brain-stem behaviour — the root flow carrying the mind's life goal. */
 export const STEM_RE = /brain.?stem/i;
@@ -72,6 +78,12 @@ function toInner(n: RawNode): Omit<InnerNode, 'x' | 'y'> {
     inner.subflowId = prop<string>(n, 'subflowId');
     inner.inputMode = prop<string>(n, 'inputMode');
     inner.outputMode = prop<string>(n, 'outputMode');
+  } else if (type === 'resource') {
+    inner.resourceScope = prop<string>(n, 'scope') === 'run' ? 'run' : 'mcp';
+    inner.server = prop<string>(n, 'boundServer');
+    inner.uri = inner.resourceScope === 'run'
+      ? prop<string>(n, 'runName')
+      : prop<string>(n, 'uri');
   }
   return inner;
 }
@@ -107,7 +119,7 @@ function normalizeInner(nodes: RawNode[]): InnerNode[] {
 }
 
 function toNeuron(flow: RawFlow, models: Record<string, ModelInfo>): Neuron {
-  const counts = { start: 0, process: 0, finish: 0, mcp: 0, subflow: 0 } as Record<NodeType, number>;
+  const counts = zeroCounts();
   const providers = new Set<string>();
   const modelNames = new Set<string>();
   const servers = new Set<string>();
@@ -217,7 +229,7 @@ function toAbility(server: string): Neuron {
     name: server,
     description: '',
     folder: '',
-    counts: { start: 0, process: 0, finish: 0, mcp: 0, subflow: 0 },
+    counts: zeroCounts(),
     nodeTotal: 0,
     providers: [],
     modelNames: [],
@@ -226,6 +238,153 @@ function toAbility(server: string): Neuron {
     broken: false,
     inner: { nodes: [], edges: [] },
   };
+}
+
+// ---- Resources ("memories", Tier 3) ----------------------------------------
+
+/** djb2 — deterministic short hash so very long uris still yield a stable id. */
+function hashUri(s: string): string {
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = ((h << 5) + h + s.charCodeAt(i)) >>> 0;
+  return h.toString(36);
+}
+
+/** Stable neuron id for a STATIC resource on a server. */
+export function resourceId(server: string, uri: string): string {
+  const body = uri.length <= 64 ? uri : hashUri(uri);
+  return `resource:${server}:${body}`;
+}
+
+/** Stable, conversation-agnostic id for a RUN artifact (run uris are id-based
+ * and per-conversation, so the NAME is the identity). */
+export function runResourceId(name: string): string {
+  return `resource:flujo:run:${name}`;
+}
+
+/** A referenced data artifact, collected from a flow's resource nodes + pills. */
+interface ResourceRef {
+  id: string;
+  name: string;
+  uri: string;
+  server?: string;
+  /** 'produce' when a process→resource edge writes into it; else 'consume'. */
+  role: 'consume' | 'produce';
+}
+
+/** `${resource:<server>__<uri>}` pills in process prompts (new format only). */
+const PILL_RE = /\$\{resource:([^}]+)\}/g;
+
+/**
+ * Every data artifact a flow references: resource NODES (role from edge
+ * direction — an edge INTO the resource node means the flow writes it) and
+ * resource PILLS in process prompt templates (always reads).
+ */
+function collectResourceRefs(flow: RawFlow): ResourceRef[] {
+  const refs = new Map<string, ResourceRef>();
+  const upsert = (ref: ResourceRef) => {
+    const existing = refs.get(ref.id);
+    // 'produce' wins: a flow that both writes and reads shows as the writer.
+    if (!existing || (ref.role === 'produce' && existing.role === 'consume')) refs.set(ref.id, ref);
+  };
+
+  for (const n of flow.nodes) {
+    if (nodeType(n) !== 'resource') continue;
+    const scope = prop<string>(n, 'scope') === 'run' ? 'run' : 'mcp';
+    const produced = flow.edges.some((e) => e.target === n.id);
+    if (scope === 'run') {
+      const name = prop<string>(n, 'runName');
+      if (!name) continue;
+      upsert({
+        id: runResourceId(name),
+        name,
+        uri: `run:${name}`,
+        server: 'flujo',
+        role: produced ? 'produce' : 'consume',
+      });
+    } else {
+      const server = prop<string>(n, 'boundServer');
+      const uri = prop<string>(n, 'uri');
+      if (!server || !uri) continue;
+      upsert({
+        id: resourceId(server, uri),
+        name: n.data?.label || uri.split('/').pop() || uri,
+        uri,
+        server,
+        role: 'consume', // static resources are read-only
+      });
+    }
+  }
+
+  for (const n of flow.nodes) {
+    if (nodeType(n) !== 'process') continue;
+    const promptText = prop<string>(n, 'promptTemplate');
+    if (!promptText) continue;
+    PILL_RE.lastIndex = 0;
+    for (let m = PILL_RE.exec(promptText); m; m = PILL_RE.exec(promptText)) {
+      const body = m[1];
+      const sep = body.indexOf('__');
+      if (sep <= 0) continue; // legacy/odd pill bodies are skipped
+      const server = body.slice(0, sep);
+      const uri = body.slice(sep + 2);
+      upsert({
+        id: resourceId(server, uri),
+        name: uri.split('/').pop() || uri,
+        uri,
+        server,
+        role: 'consume',
+      });
+    }
+  }
+
+  return [...refs.values()];
+}
+
+/** A data artifact as a small "memory" neuron. */
+function toResource(ref: ResourceRef): Neuron {
+  return {
+    id: ref.id,
+    kind: 'resource',
+    name: ref.name,
+    description: '',
+    folder: '',
+    counts: zeroCounts(),
+    nodeTotal: 0,
+    providers: [],
+    modelNames: [],
+    servers: ref.server ? [ref.server] : [],
+    subflowRefs: [],
+    broken: false,
+    uri: ref.uri,
+    inner: { nodes: [], edges: [] },
+  };
+}
+
+/**
+ * Resolve which neuron a live resource event lights up:
+ * exact static id (server+uri) → run-artifact id (event name) → the owning
+ * ability hub (typically `ability:flujo` for run resources without a declared
+ * memory neuron). Null when nothing matches at all.
+ */
+export function resourceNeuronFor(
+  graph: BrainGraph,
+  server?: string,
+  uri?: string,
+  name?: string,
+): Neuron | null {
+  const byId = new Map(graph.neurons.map((n) => [n.id, n]));
+  if (server && uri) {
+    const exact = byId.get(resourceId(server, uri));
+    if (exact) return exact;
+  }
+  if (name) {
+    const byName = byId.get(runResourceId(name));
+    if (byName) return byName;
+  }
+  if (server) {
+    const hub = byId.get(abilityId(server));
+    if (hub) return hub;
+  }
+  return null;
 }
 
 /** Turn raw flows into behaviours + the synapses that wire them together. */
@@ -273,6 +432,29 @@ export function distill(
     }
   }
   neurons.push(...abilities);
+
+  // 2.5 Memories (Tier 3) — every data artifact a flow references (resource
+  // nodes + resource pills) becomes a small "memory" neuron. Only
+  // flow-referenced resources are distilled — listing every server's full
+  // resource catalog would be unbounded, and only referenced ones can ever
+  // light up. Writes are directed behaviour → memory; reads are undirected.
+  const resourceNeurons = new Map<string, Neuron>();
+  for (const flow of flows) {
+    for (const ref of collectResourceRefs(flow)) {
+      if (!resourceNeurons.has(ref.id)) resourceNeurons.set(ref.id, toResource(ref));
+      synapses.push({
+        source: flow.id,
+        target: ref.id,
+        kind: 'resource',
+        weight: 1,
+        directed: ref.role === 'produce',
+        detail: ref.role === 'produce'
+          ? `writes memory "${ref.name}"`
+          : `reads memory "${ref.name}"`,
+      });
+    }
+  }
+  neurons.push(...resourceNeurons.values());
 
   // 3. Shared models — undirected synaptic ties (abilities have none).
   for (let i = 0; i < neurons.length; i++) {

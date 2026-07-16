@@ -1,6 +1,6 @@
 // ---- Raw FLUJO shapes (subset of what /api/flow returns) ----
 
-export type NodeType = 'start' | 'process' | 'finish' | 'mcp' | 'subflow';
+export type NodeType = 'start' | 'process' | 'finish' | 'mcp' | 'subflow' | 'resource';
 
 export interface RawNode {
   id: string;
@@ -56,8 +56,13 @@ export interface InnerNode {
   type: NodeType;
   label: string;
   description?: string;
-  /** For mcp nodes: the bound ability (MCP server) name (status lookup). */
+  /** For mcp nodes: the bound ability (MCP server) name (status lookup).
+   *  For resource nodes: the server publishing the static resource. */
   server?: string;
+  /** Resource nodes: the artifact's uri (static) — shown in detail panels. */
+  uri?: string;
+  /** Resource nodes: 'mcp' = static server resource, 'run' = run artifact. */
+  resourceScope?: 'mcp' | 'run';
   /** Normalized position in [-1, 1] derived from the flow editor layout. */
   x: number;
   y: number;
@@ -85,8 +90,9 @@ export interface InnerNode {
  */
 export interface Neuron {
   id: string;
-  /** Absent = behaviour (a runnable flow). */
-  kind?: 'ability';
+  /** Absent = behaviour (a runnable flow). 'ability' = MCP server;
+   *  'resource' = a data artifact ("memory") flows read/write. */
+  kind?: 'ability' | 'resource';
   name: string;
   description: string;
   folder: string;
@@ -104,10 +110,12 @@ export interface Neuron {
   subflowRefs: string[];
   /** True when the flow has nodes but no wiring (a "dormant" neuron). */
   broken: boolean;
+  /** Resource neurons: the artifact's full uri (id may hash long uris). */
+  uri?: string;
   inner: { nodes: InnerNode[]; edges: Array<{ source: string; target: string }> };
 }
 
-export type SynapseKind = 'subflow' | 'server' | 'model';
+export type SynapseKind = 'subflow' | 'server' | 'model' | 'resource';
 
 /** One relationship between two neurons. */
 export interface Synapse {

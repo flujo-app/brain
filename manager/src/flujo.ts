@@ -122,6 +122,24 @@ export class FlujoClient {
     });
   }
 
+  /** Resources (data artifacts / "memories") a server publishes — the built-in
+   *  "flujo" server lists run-scoped artifacts captured during flow runs. */
+  listServerResources(name: string): Promise<{
+    resources?: Array<{ uri?: string; name?: string; description?: string; mimeType?: string }>;
+    resourceTemplates?: unknown[];
+    error?: string;
+  }> {
+    return this.req(`/api/mcp/servers/${encodeURIComponent(name)}/resources`, { timeoutMs: 30_000 });
+  }
+
+  /** Read one resource's contents by uri. */
+  readResource(server: string, uri: string): Promise<{ success?: boolean; data?: { contents?: Array<{ uri?: string; mimeType?: string; text?: string; blob?: string }> }; error?: string }> {
+    return this.req(
+      `/api/mcp/servers/${encodeURIComponent(server)}/resources/read?uri=${encodeURIComponent(uri)}`,
+      { timeoutMs: 60_000 },
+    );
+  }
+
   // ---- execution ----
   /** Run a flow to completion via the OpenAI-compatible endpoint. */
   async runFlow(flowName: string, input: string, timeoutMs = 600_000): Promise<string> {

@@ -2,7 +2,7 @@ import type { BrainGraph, Neuron, NodeChatMessage, Synapse, SynapseKind } from '
 import { BACKGROUND, SYNAPSE_COLORS, SYNAPSE_ERROR, nodeTypeLabel } from '../theme';
 import { groupNeurons, type GroupMode, type Grouping } from '../grouping';
 import { computeBrainLayout } from '../layout/brainLayout';
-import { abilityForTool, splitToolName } from '../data/distill';
+import { abilityForTool, splitToolName, resourceNeuronFor } from '../data/distill';
 import { abilityTint, neuronRadius } from '../scene/neuronStyle';
 import type { Hud, RelationLine } from '../ui/hud';
 import { ChatBubbleLayer } from '../ui/bubbles';
@@ -591,7 +591,11 @@ export class Brain2D {
     if (id) {
       const n = this.graph.neurons.find((nn) => nn.id === id)!;
       this.hud.showTooltip(
-        n.kind === 'ability' ? `${n.name} · ability · ${this.graph.servers[n.name] ?? 'unknown'}` : `${n.name} · ${n.nodeTotal} nodes`,
+        n.kind === 'ability'
+          ? `${n.name} · ability · ${this.graph.servers[n.name] ?? 'unknown'}`
+          : n.kind === 'resource'
+            ? `${n.name} · memory${n.uri ? ` · ${n.uri}` : ''}`
+            : `${n.name} · ${n.nodeTotal} nodes`,
         x,
         y,
       );
@@ -657,6 +661,27 @@ export class Brain2D {
         if (ability && e.flowId) {
           this.flash(ability.id, e.flowId, e.isError ? { color: SYNAPSE_ERROR } : undefined);
         }
+        break;
+      }
+      case 'resource-read':
+      case 'resource-write': {
+        // A memory being recalled or written (Tier 3) — mirrors scene/brain.ts.
+        this.touchFlow(e.conversationId, e.flowId);
+        const read = e.kind === 'resource-read';
+        const res = resourceNeuronFor(this.graph, e.server, e.uri, e.resourceName);
+        if (res) {
+          this.glow.set(res.id, 1);
+          fireNeuron(res.id);
+          if (e.flowId) {
+            const [from, to] = read ? [res.id, e.flowId] : [e.flowId, res.id];
+            fireLink(from, to, 'resource');
+            this.flash(from, to, { color: SYNAPSE_COLORS.resource });
+          }
+        }
+        const label = e.resourceName ?? e.uri?.split('/').pop() ?? 'memory';
+        const known = e.flowId && this.graph.neurons.some((n) => n.id === e.flowId);
+        this.bubbles.push(known ? e.flowId : null, '', `${read ? '▤' : '▤✎'} ${label}`, { pill: true });
+        this.hudActivity = { flowId: e.flowId, detail: `${read ? 'reads' : 'writes'} memory ${label}` };
         break;
       }
       case 'message':

@@ -1,8 +1,9 @@
 import type { Neuron, ServerStatus } from '../types';
 
-/** World radius for a neuron core — abilities are fixed, behaviours grow with size. */
+/** World radius for a neuron core — abilities/memories are fixed, behaviours grow with size. */
 export function neuronRadius(n: Neuron): number {
   if (n.kind === 'ability') return 1.15;
+  if (n.kind === 'resource') return 0.9; // memories are the smallest hubs
   return 0.9 + Math.sqrt(n.nodeTotal) * 0.55;
 }
 

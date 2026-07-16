@@ -30,6 +30,7 @@ export const SYNAPSE_COLORS: Record<SynapseKind, number> = {
   subflow: 0xf59e0b, // amber axon — the strongest tie
   server: 0x4d8df6, // blue — shared MCP tooling
   model: 0xa78bfa, // violet — shared model
+  resource: 0x2dd4bf, // teal — data artifact ("memory") read/write
 };
 
 /** A tool result that failed — the reverse flash burns red. */
@@ -42,17 +43,20 @@ export const NODE_TYPE_COLORS: Record<NodeType, number> = {
   mcp: 0x4d8df6, // blue (FLUJO info)
   subflow: 0xf59e0b, // amber (FLUJO warning)
   finish: 0x4ade80, // green (FLUJO success)
+  resource: 0x2dd4bf, // teal (FLUJO resource, Tier 3)
 };
 
 export const BACKGROUND = 0x05070f;
 
-/** UI vocabulary: flows are "behaviours", MCP servers are "abilities". */
+/** UI vocabulary: flows are "behaviours", MCP servers are "abilities",
+ *  data artifacts are "memories". */
 export const NODE_TYPE_LABELS: Record<NodeType, string> = {
   start: 'start',
   process: 'process',
   mcp: 'ability',
   subflow: 'behaviour',
   finish: 'finish',
+  resource: 'memory',
 };
 
 export function nodeTypeLabel(t: NodeType): string {

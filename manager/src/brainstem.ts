@@ -16,6 +16,8 @@ export const BRAINSTEM_TOOLS = [
   'use_skill',
   'learn_skill',
   'forget_skill',
+  'list_memories',
+  'recall_memory',
 ] as const;
 
 /** Max concurrent ephemeral behaviour runs per brain. Doubles as the recursion
@@ -195,6 +197,51 @@ export function buildBrainstemServer(brain: BrainRecord, flujo: FlujoClient): Mc
     },
   );
 
+  server.tool(
+    'list_memories',
+    'List your memories: data artifacts captured during behaviour runs (tool outputs, saved step results) or published by a skill. Omit ability to see your own run artifacts (the built-in "flujo" skill).',
+    {
+      ability: z.string().optional().describe('Optional: a skill (MCP server) name whose resources to list. Default: "flujo" (your own run artifacts).'),
+    },
+    async ({ ability }) => {
+      const server_ = ability || 'flujo';
+      try {
+        const res = await flujo.listServerResources(server_);
+        if (res.error) return text(`Could not list memories of "${server_}": ${res.error}`);
+        const lines = (res.resources ?? []).map(
+          (r) => `- ${r.name ?? r.uri}: ${(r.description ?? '').slice(0, 120)}${r.mimeType ? ` [${r.mimeType}]` : ''}\n  uri: ${r.uri}`,
+        );
+        return text(`Memories of "${server_}":\n${lines.join('\n') || '(none yet)'}`);
+      } catch (err) {
+        return text(`Could not list memories: ${(err as Error).message}`);
+      }
+    },
+  );
+
+  server.tool(
+    'recall_memory',
+    'Recall one memory: read a data artifact by its uri (from list_memories). Writing happens through behaviours (a step\'s captureResource), never directly — that keeps every memory\'s lineage intact.',
+    {
+      ability: z.string().optional().describe('The skill holding the memory. Default: "flujo".'),
+      uri: z.string().describe('The memory\'s uri from list_memories.'),
+    },
+    async ({ ability, uri }) => {
+      const server_ = ability || 'flujo';
+      try {
+        const res = await flujo.readResource(server_, uri);
+        if (!res.success || !res.data) return text(`Could not recall "${uri}": ${res.error ?? 'unknown error'}`);
+        const parts = (res.data.contents ?? []).map((c) => {
+          if (typeof c.text === 'string') return c.text;
+          if (typeof c.blob === 'string') return `[binary ${c.mimeType ?? 'data'} — not shown]`;
+          return JSON.stringify(c);
+        });
+        return text(parts.join('\n\n').slice(0, 4000) || '(empty memory)');
+      } catch (err) {
+        return text(`Could not recall memory: ${(err as Error).message}`);
+      }
+    },
+  );
+
   return server;
 }
 
@@ -206,7 +253,7 @@ const BRAINSTEM_PROMPT = `Act through your tools. Take stock with list_behaviour
 Prefer performing an existing behaviour; learn a new one only when none fits. Forget what proved useless.`;
 
 /** Build the brain-stem flow JSON (FLUJO's exact node/edge shapes).
- *  Only the eight tool-belt verbs are bound. FLUJO's own API (the built-in
+ *  Only the ten tool-belt verbs are bound. FLUJO's own API (the built-in
  *  "flujo" MCP server, where present) stays reachable through
  *  list_skills/use_skill without bloating the bound schema. */
 export function brainstemFlow(brain: BrainRecord, modelId: string, modelName: string): unknown {

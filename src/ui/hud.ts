@@ -245,10 +245,11 @@ export class Hud {
   private renderResults(q: string): void {
     if (!q) return this.hideResults();
     const matches = this.neurons.filter((n) => n.name.toLowerCase().includes(q));
-    // Behaviours are what the user is looking for — list them above abilities.
+    // Behaviours are what the user is looking for — list them above
+    // abilities/memories.
     matches.sort((a, b) => {
-      const ka = a.kind === 'ability' ? 1 : 0;
-      const kb = b.kind === 'ability' ? 1 : 0;
+      const ka = a.kind ? 1 : 0;
+      const kb = b.kind ? 1 : 0;
       return ka - kb || a.name.localeCompare(b.name);
     });
     this.results = matches.slice(0, 12);
@@ -261,8 +262,9 @@ export class Hud {
       box.innerHTML = this.results
         .map((n, i) => {
           const ability = n.kind === 'ability';
-          const color = hex(NODE_TYPE_COLORS[ability ? 'mcp' : 'subflow']);
-          const tag = ability ? 'ability' : `${n.nodeTotal} nodes`;
+          const memory = n.kind === 'resource';
+          const color = hex(NODE_TYPE_COLORS[ability ? 'mcp' : memory ? 'resource' : 'subflow']);
+          const tag = ability ? 'ability' : memory ? 'memory' : `${n.nodeTotal} nodes`;
           return `<li data-id="${esc(n.id)}" role="option" id="search-opt-${i}" aria-selected="false">
             <span class="dot" style="color:${color};background:${color}"></span>
             <span class="nm">${esc(n.name)}</span>
@@ -596,6 +598,11 @@ export class Hud {
       this.showAbilityPanel(n, relations, servers);
       return;
     }
+    if (n.kind === 'resource') {
+      this.onSelect(null); // memories can't chat either
+      this.showResourcePanel(n, relations);
+      return;
+    }
     this.onSelect(n.id);
     this.showReader(
       'behaviour',
@@ -655,6 +662,39 @@ export class Hud {
     this.$('p-rels').innerHTML = items
       ? `<details open><summary>used by <b>${users.length}</b></summary><ul>${items}</ul></details>`
       : '<details open><summary>used by <b>0</b></summary><ul><li>No behaviour uses this ability yet.</li></ul></details>';
+    this.$('p-hint').textContent = 'Esc or click empty space for overview';
+    this.selectionOpen = true;
+    this.syncPanels();
+  }
+
+  /** Overview panel for a memory (data artifact) neuron (Tier 3). */
+  private showResourcePanel(n: Neuron, relations: RelationLine[]): void {
+    const color = hex(NODE_TYPE_COLORS.resource);
+    this.showReader(
+      'memory',
+      color,
+      n.name,
+      n.description || 'A data artifact behaviours read or write.',
+      [],
+    );
+
+    this.$('p-kicker').innerHTML = `<span class="k" style="color:${color}">memory</span>`;
+
+    const touching = relations.filter((r) => r.synapse.kind === 'resource');
+    const writers = touching.filter((r) => r.synapse.directed);
+    const chips = [
+      ...(n.uri ? [`<span class="chip">${esc(n.uri)}</span>`] : []),
+      `<span class="chip"><b>${touching.length}</b> behaviour${touching.length === 1 ? '' : 's'}</span>`,
+    ];
+    this.$('p-stats').innerHTML = chips.join('');
+
+    const dot = hex(SYNAPSE_COLORS.resource);
+    const items = touching
+      .map((r) => `<li><span class="dot" style="color:${dot};background:${dot}"></span><b>${esc(r.otherName)}</b>${r.synapse.directed ? ' <em class="tag">writes</em>' : ''}</li>`)
+      .join('');
+    this.$('p-rels').innerHTML = items
+      ? `<details open><summary>touched by <b>${touching.length}</b>${writers.length ? ` · ${writers.length} writer${writers.length === 1 ? '' : 's'}` : ''}</summary><ul>${items}</ul></details>`
+      : '<details open><summary>touched by <b>0</b></summary><ul><li>No behaviour references this memory yet.</li></ul></details>';
     this.$('p-hint').textContent = 'Esc or click empty space for overview';
     this.selectionOpen = true;
     this.syncPanels();

@@ -26,6 +26,8 @@ export interface BrainActivityEvent {
     | 'subflow-done'
     | 'tool-call'
     | 'tool-result'
+    | 'resource-read'
+    | 'resource-write'
     | 'message'
     | 'run-done';
   conversationId: string;
@@ -38,6 +40,11 @@ export interface BrainActivityEvent {
   toolName?: string;
   /** tool-result: the tool call failed (drives the red return flash). */
   isError?: boolean;
+  /** resource-read / resource-write: the artifact's identity ("memory"). */
+  server?: string;
+  uri?: string;
+  /** resource events: the artifact's stable name (run artifacts match by it). */
+  resourceName?: string;
   /** message: the assistant's chat output text. */
   text?: string;
 }
@@ -62,6 +69,9 @@ interface RawEvent {
   status?: string;
   /** tool:result: the tool call failed. */
   isError?: boolean;
+  /** resource:read / resource:write (Tier 3): the artifact's identity. */
+  server?: string;
+  uri?: string;
   /** tool:call: the model-issued tool call id (also on the persisted message). */
   toolCallId?: string;
   /** message: a FlujoChatMessage (OpenAI message + id/timestamp/processNodeId). */
@@ -203,6 +213,17 @@ export class ExecutionWatcher {
     return true;
   }
 
+  /** Per-uri throttle for resource events: a prompt with several pills emits a
+   *  burst of reads — one flash per artifact per window is enough. */
+  private lastResourceFlash = new Map<string, number>();
+  private throttledResource(key: string, windowMs = 300): boolean {
+    const now = Date.now();
+    const last = this.lastResourceFlash.get(key);
+    if (last !== undefined && now - last < windowMs) return false;
+    this.lastResourceFlash.set(key, now);
+    return true;
+  }
+
   private dispatch(id: string, ev: RawEvent): void {
     const stack = this.stacks.get(id) ?? [];
     const depth = ev.depth ?? 0;
@@ -259,6 +280,22 @@ export class ExecutionWatcher {
           isError: ev.isError,
         });
         break;
+      case 'resource:read':
+      case 'resource:write': {
+        // A data artifact ("memory") being read or written (Tier 3).
+        const kind = ev.type === 'resource:read' ? 'resource-read' as const : 'resource-write' as const;
+        if (!this.throttledResource(`${kind}:${ev.uri ?? ev.name ?? ''}`)) break;
+        this.onEvent({
+          kind,
+          conversationId: id,
+          flowId: flowAt(depth),
+          node: ev.node,
+          server: ev.server,
+          uri: ev.uri,
+          resourceName: ev.name,
+        });
+        break;
+      }
       case 'message': {
         // Assistant activity only — user turns and tool results stay
         // invisible. Spoken text becomes a bubble; tool_calls on the message

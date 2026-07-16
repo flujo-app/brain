@@ -128,7 +128,9 @@ export function computeBrainLayout(graph: BrainGraph, _grouping: Grouping, flat 
   const useDeg = new Map<string, number>();
   for (const s of graph.synapses) {
     if (s.kind === 'subflow') inDeg.set(s.target, (inDeg.get(s.target) ?? 0) + 1);
-    else if (s.kind === 'server') useDeg.set(s.target, (useDeg.get(s.target) ?? 0) + 1);
+    // Abilities and memories both pull toward the core by how many
+    // behaviours touch them.
+    else if (s.kind === 'server' || s.kind === 'resource') useDeg.set(s.target, (useDeg.get(s.target) ?? 0) + 1);
   }
   let maxInLog = 1e-6;
   let maxUseLog = 1e-6;
@@ -137,7 +139,7 @@ export function computeBrainLayout(graph: BrainGraph, _grouping: Grouping, flat 
 
   const stem = nodes.find(isStem) ?? null;
   const stemId = stem?.id ?? null;
-  const nBeh = nodes.reduce((c, nd) => c + (nd.kind === 'ability' ? 0 : 1), 0);
+  const nBeh = nodes.reduce((c, nd) => c + (nd.kind ? 0 : 1), 0);
   const R = 26 + Math.sqrt(Math.max(1, nBeh)) * 6;
 
   // Radius fraction s in [0,1] per neuron: 0 = dead centre, 1 = rim.
@@ -146,7 +148,7 @@ export function computeBrainLayout(graph: BrainGraph, _grouping: Grouping, flat 
     let s: number;
     if (nd.id === stemId) {
       s = 0;
-    } else if (nd.kind === 'ability') {
+    } else if (nd.kind === 'ability' || nd.kind === 'resource') {
       const core = Math.log1p(useDeg.get(nd.id) ?? 0) / maxUseLog;
       s = ABILITY_BIAS + (1 - core) * (1 - ABILITY_BIAS);
     } else {
