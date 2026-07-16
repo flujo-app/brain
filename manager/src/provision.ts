@@ -103,16 +103,21 @@ async function ensureStandardSkills(flujo: FlujoClient, managed: boolean): Promi
     ? { transport: 'stdio', disabled: false, autoApprove: [], env: containerEnv, rootPath: '/app' }
     : { transport: 'stdio', disabled: false, autoApprove: [], env: {}, rootPath: '' };
   const skills: McpServerConfig[] = [
-    // Long-term memory: the reference knowledge-graph server. On managed
-    // brains the file lives on the db volume, so memories survive rebuilds.
-    managed
-      ? { ...stdio, name: 'memory', command: '/usr/local/bin/mcp-server-memory', args: [], env: { ...containerEnv, MEMORY_FILE_PATH: '/app/db/memory.json' } }
-      : { ...stdio, name: 'memory', command: 'npx', args: ['-y', '@modelcontextprotocol/server-memory'] },
     // Plain HTTP fetch (reference server) — far cheaper than the browser
     // when a page needs reading, not driving.
     managed
       ? { ...stdio, name: 'fetch', command: '/usr/local/bin/mcp-server-fetch', args: [] }
       : { ...stdio, name: 'fetch', command: 'uvx', args: ['mcp-server-fetch'] },
+    // A real shell — the container is the sandbox. Also what lets a brain
+    // install anything else (npm, pipx, uvx, git are all in the image).
+    managed
+      ? { ...stdio, name: 'terminal', command: '/usr/local/bin/mcp-server-commands', args: [] }
+      : { ...stdio, name: 'terminal', command: 'npx', args: ['-y', 'mcp-server-commands'] },
+    // Reference filesystem server, rooted at the app dir (db volume included).
+    // Managed only: an adopted host has no path we can safely assume.
+    ...(managed
+      ? [{ ...stdio, name: 'filesystem', command: '/usr/local/bin/mcp-server-filesystem', args: ['/app'] }]
+      : []),
     // Baked-in headless Chromium — managed images only.
     // --isolated: fresh profile per session, so parallel behaviours never
     // fight over a profile lock. System Chromium, no sandbox (the container

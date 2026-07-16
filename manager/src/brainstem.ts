@@ -303,8 +303,8 @@ export function brainstemFlow(brain: BrainRecord, modelId: string, modelName: st
   };
 }
 
-/** Prompt used by the heartbeat planned execution. */
-export const WAKE_PROMPT =
-  'Wake up. Review your life goal and your current behaviours and skills. ' +
-  'Decide the single most useful action or improvement, carry it out with your tools, ' +
-  'then summarize what changed.';
+/** Prompt used by the heartbeat planned execution. Bare on purpose — the life
+ *  goal (start node) and tool descriptions carry the semantics; instructions
+ *  here get parroted by weak models. Not fully empty: FLUJO needs a non-empty
+ *  user message to start the flow. */
+export const WAKE_PROMPT = 'Wake up.';
