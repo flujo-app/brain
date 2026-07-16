@@ -27,11 +27,20 @@ RUN apt-get update \
         fonts-noto-cjk \
     && rm -rf /var/lib/apt/lists/*
 
-# The Playwright MCP server, global so the seeded "browser" skill starts
-# instantly (bin: playwright-mcp). Its bundled playwright never needs to
-# download a browser — the system Chromium is the one and only.
-RUN npm install -g @playwright/mcp \
+# The MCP servers behind the seeded standard skills, global so they start
+# instantly with no runtime downloads:
+#   browser — @playwright/mcp (bin: playwright-mcp); its bundled playwright
+#             never downloads a browser, the system Chromium is the one and only
+#   memory  — reference knowledge-graph server (bin: mcp-server-memory)
+RUN npm install -g @playwright/mcp @modelcontextprotocol/server-memory \
     && npm cache clean --force
+
+# fetch — the reference fetch server is Python; pipx gives it an isolated
+# venv and a global bin (mcp-server-fetch) without touching the system python.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends pipx \
+    && rm -rf /var/lib/apt/lists/* \
+    && PIPX_HOME=/opt/pipx PIPX_BIN_DIR=/usr/local/bin pipx install mcp-server-fetch
 
 ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 \
     BRAIN_BROWSER_EXECUTABLE=/usr/bin/chromium

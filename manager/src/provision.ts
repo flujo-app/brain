@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { FlujoClient, type FlujoModel } from './flujo.js';
+import { FlujoClient, type FlujoModel, type McpServerConfig } from './flujo.js';
 import { createFlujoContainer, flujoImageAvailable, removeFlujoContainer } from './docker.js';
 import { BRAINSTEM_NAME, brainstemFlow, WAKE_PROMPT } from './brainstem.js';
 import type { Registry } from './registry.js';
@@ -82,23 +82,53 @@ async function setupByokModel(flujo: FlujoClient, spec: Extract<ModelSpec, { mod
   });
 }
 
-/** Register the baked-in headless Chromium as the "browser" skill (idempotent). */
-async function ensureBrowserSkill(flujo: FlujoClient): Promise<void> {
-  const servers = await flujo.listMcpServers();
-  if (servers.some((s) => s.name === 'browser')) return;
-  await flujo.createMcpServer({
-    name: 'browser',
-    transport: 'stdio',
-    command: 'playwright-mcp',
+/** Seed the standard skills every brain is born with (idempotent — existing
+ *  names are left alone). `managed` brains run our flujo-browser image with
+ *  the binaries baked in; adopted hosts get npx/uvx equivalents, best-effort
+ *  (they need Node resp. uv on that machine, and can be forgotten if not).
+ *
+ *  Managed configs follow two hard-won constraints (see brain-online, same
+ *  lesson): FLUJO passes the configured env VERBATIM to the stdio transport,
+ *  REPLACING the inherited environment — a bare command name spawns with an
+ *  empty PATH and dies with ENOENT, so use absolute binary paths plus an
+ *  explicit PATH/HOME. And without a rootPath FLUJO defaults the child cwd to
+ *  mcp-servers/<name>, which never exists for an API-registered server —
+ *  also a spawn ENOENT. /app always exists in the image. */
+async function ensureStandardSkills(flujo: FlujoClient, managed: boolean): Promise<string[]> {
+  const containerEnv = {
+    PATH: '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin',
+    HOME: '/home/node',
+  };
+  const stdio = managed
+    ? { transport: 'stdio', disabled: false, autoApprove: [], env: containerEnv, rootPath: '/app' }
+    : { transport: 'stdio', disabled: false, autoApprove: [], env: {}, rootPath: '' };
+  const skills: McpServerConfig[] = [
+    // Long-term memory: the reference knowledge-graph server. On managed
+    // brains the file lives on the db volume, so memories survive rebuilds.
+    managed
+      ? { ...stdio, name: 'memory', command: '/usr/local/bin/mcp-server-memory', args: [], env: { ...containerEnv, MEMORY_FILE_PATH: '/app/db/memory.json' } }
+      : { ...stdio, name: 'memory', command: 'npx', args: ['-y', '@modelcontextprotocol/server-memory'] },
+    // Plain HTTP fetch (reference server) — far cheaper than the browser
+    // when a page needs reading, not driving.
+    managed
+      ? { ...stdio, name: 'fetch', command: '/usr/local/bin/mcp-server-fetch', args: [] }
+      : { ...stdio, name: 'fetch', command: 'uvx', args: ['mcp-server-fetch'] },
+    // Baked-in headless Chromium — managed images only.
     // --isolated: fresh profile per session, so parallel behaviours never
     // fight over a profile lock. System Chromium, no sandbox (the container
     // is the sandbox), headless.
-    args: ['--headless', '--no-sandbox', '--isolated', '--executable-path', '/usr/bin/chromium'],
-    disabled: false,
-    autoApprove: [],
-    env: {},
-    rootPath: '',
-  });
+    ...(managed
+      ? [{ ...stdio, name: 'browser', command: '/usr/local/bin/playwright-mcp', args: ['--headless', '--no-sandbox', '--isolated', '--executable-path', '/usr/bin/chromium'] }]
+      : []),
+  ];
+  const existing = new Set((await flujo.listMcpServers()).map((s) => s.name));
+  const added: string[] = [];
+  for (const skill of skills) {
+    if (existing.has(skill.name)) continue;
+    await flujo.createMcpServer(skill);
+    added.push(skill.name);
+  }
+  return added;
 }
 
 /**
@@ -167,35 +197,27 @@ export async function provisionBrain(registry: Registry, brain: BrainRecord, req
       });
     }
 
-    // 3b. The browser skill — managed brains run the flujo-browser image
-    //     (headless Chromium + Playwright MCP baked in), so offer it as a
-    //     ready skill. Adopted instances are left alone: their host may lack
-    //     a browser, and the brain can still learn one that fits.
-    if (!req.adoptUrl) {
-      await step('installing the browser skill…');
-      try {
-        await ensureBrowserSkill(flujo);
-      } catch (err) {
-        // Not fatal — the image may be a plain FLUJO without Chromium.
-        brain.statusDetail = `browser skill skipped: ${(err as Error).message}`;
-      }
+    // 3b. Standard skills — memory, fetch, and (managed only) the browser.
+    //     Managed brains run the flujo-browser image with everything baked
+    //     in; adopted hosts get best-effort npx/uvx configs.
+    await step('installing standard skills…');
+    try {
+      await ensureStandardSkills(flujo, !req.adoptUrl);
+    } catch (err) {
+      // Not fatal — a skill that fails to connect can be forgotten later.
+      brain.statusDetail = `standard skills incomplete: ${(err as Error).message}`;
     }
 
-    // 4. The brain-stem flow (life goal + model + tools). Newer FLUJOs expose
-    //    their whole API as the built-in "flujo" MCP server (also proxied at
-    //    /mcp-proxy/flujo) — bind all of its tools so the brain-stem can drive
-    //    FLUJO directly. Older instances just don't have it; skip silently.
+    // 4. The brain-stem flow (life goal + model + tool belt). Only the eight
+    //    verbs are bound — where FLUJO exposes its own API as the built-in
+    //    "flujo" MCP server, the stem reaches it via list_skills/use_skill.
     await step('growing the brain-stem…');
-    const flujoTools = await flujo
-      .listServerTools('flujo')
-      .then((r) => (r.error ? [] : (r.tools ?? []).flatMap((t) => (t.name ? [t.name] : []))))
-      .catch(() => [] as string[]);
     const flows = await flujo.listFlows().catch(() => []);
     const already = flows.find((f) => f.name === BRAINSTEM_NAME);
     if (already) {
       brain.brainstemFlowId = already.id;
     } else {
-      const flow = brainstemFlow(brain, model.id, model.name, flujoTools) as { id: string };
+      const flow = brainstemFlow(brain, model.id, model.name) as { id: string };
       await flujo.createFlow(flow);
       brain.brainstemFlowId = flow.id;
     }
@@ -287,12 +309,12 @@ export async function rebuildBrain(registry: Registry, brain: BrainRecord): Prom
     await waitForFlujo(flujo, 240_000);
 
     // The volumes carried everything user-made; only image-level extras can
-    // be new. Today that is the browser skill.
-    await step('installing the browser skill…');
+    // be new. Today those are the standard skills (memory, fetch, browser).
+    await step('installing standard skills…');
     try {
-      await ensureBrowserSkill(flujo);
+      await ensureStandardSkills(flujo, true);
     } catch (err) {
-      brain.statusDetail = `browser skill skipped: ${(err as Error).message}`;
+      brain.statusDetail = `standard skills incomplete: ${(err as Error).message}`;
     }
 
     brain.status = 'ready';

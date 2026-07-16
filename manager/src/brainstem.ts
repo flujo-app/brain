@@ -18,18 +18,14 @@ export const BRAINSTEM_TOOLS = [
   'forget_skill',
 ] as const;
 
-/** Max concurrent ephemeral behaviour runs per brain (recursion brake). */
-const MAX_CONCURRENT_PERFORMS = 3;
+/** Max concurrent ephemeral behaviour runs per brain. Doubles as the recursion
+ *  depth cap: a behaviour that binds the brain-stem and performs another
+ *  behaviour holds its slot while awaiting the child, so nesting deeper than
+ *  this refuses instead of recursing forever. */
+const MAX_CONCURRENT_PERFORMS = 4;
 const performCounts = new Map<string, number>();
 
 const text = (t: string) => ({ content: [{ type: 'text' as const, text: t }] });
-
-function bindsBrainstem(flow: FlujoFlow): boolean {
-  return flow.nodes?.some((n) => {
-    const p = n.data?.properties as { boundServer?: string; mcpNodes?: Array<{ properties?: { boundServer?: string } }> } | undefined;
-    return p?.boundServer === BRAINSTEM_NAME || p?.mcpNodes?.some((m) => m.properties?.boundServer === BRAINSTEM_NAME);
-  });
-}
 
 /**
  * The brain-stem's tool belt: seven friendly verbs over FLUJO's own REST API.
@@ -71,7 +67,7 @@ export function buildBrainstemServer(brain: BrainRecord, flujo: FlujoClient): Mc
 
   server.tool(
     'perform_behaviour',
-    'Perform one of your behaviours now (ephemeral run) and get its result. Not for the brain-stem itself.',
+    `Perform one of your behaviours now (ephemeral run) and get its result. Not for the brain-stem itself. Behaviours may perform behaviours in turn — at most ${MAX_CONCURRENT_PERFORMS} run/nest at once.`,
     {
       name: z.string().describe('Exact behaviour name from list_behaviours.'),
       input: z.string().describe('The task or message to give the behaviour.'),
@@ -81,9 +77,8 @@ export function buildBrainstemServer(brain: BrainRecord, flujo: FlujoClient): Mc
       const flows = await flujo.listFlows();
       const flow = flows.find((f) => f.name === name);
       if (!flow) return text(`No behaviour named "${name}". Use list_behaviours first.`);
-      if (bindsBrainstem(flow)) return text(`REFUSED: "${name}" binds the brain-stem's own tools — performing it could recurse.`);
       const running = performCounts.get(brain.id) ?? 0;
-      if (running >= MAX_CONCURRENT_PERFORMS) return text(`REFUSED: already ${running} behaviours running — wait for them to finish.`);
+      if (running >= MAX_CONCURRENT_PERFORMS) return text(`REFUSED: already ${running} behaviours running or nested — wait for them to finish.`);
       performCounts.set(brain.id, running + 1);
       try {
         const out = await flujo.runFlow(name, input);
@@ -203,37 +198,21 @@ export function buildBrainstemServer(brain: BrainRecord, flujo: FlujoClient): Mc
   return server;
 }
 
-/** System prompt for the brain-stem's process node. */
-const BRAINSTEM_PROMPT = `You are the brain-stem: the root process of a living brain built on flows.
-Your life goal is given by the start prompt. You cannot act directly on the world —
-you act ONLY through your tools:
-
-- list_behaviours / list_skills: know yourself before acting.
-- perform_behaviour: delegate concrete work to a behaviour (ephemeral run).
-- learn_behaviour: when no behaviour fits, design a new one — grow.
-- learn_skill: install new MCP tools when behaviours need capabilities you lack.
-- forget_behaviour / forget_skill: prune what proved useless — stay lean.
-
-When the "flujo" skill is bound you also hold FLUJO's own API: authoring and
-running flows, managing MCP servers, models, and planned executions (your own
-heartbeat included). It is surgical power — prefer the verbs above for everyday
-work and reach for the flujo tools when they cannot express what you need.
-
-Each time you wake, take stock, decide the single most useful step toward your
-life goal, and take it. Prefer improving one thing well over many things poorly.
-End by summarizing what changed and what should happen on the next wake-up.`;
-
-/** FLUJO's built-in internal MCP server (its whole API as tools). */
-const FLUJO_SERVER_NAME = 'flujo';
+/** System prompt for the brain-stem's process node.
+ *  Deliberately minimal: the tool descriptions carry the semantics, and persona
+ *  prose gets parroted verbatim by weak models ("I am the brain-stem…").
+ *  Wake-specific instructions live in WAKE_PROMPT, not here. */
+const BRAINSTEM_PROMPT = `Act through your tools. Take stock with list_behaviours and list_skills before acting.
+Prefer performing an existing behaviour; learn a new one only when none fits. Forget what proved useless.`;
 
 /** Build the brain-stem flow JSON (FLUJO's exact node/edge shapes).
- *  `flujoTools`: tool names of the built-in "flujo" server to bind as a second
- *  ability (empty = instance doesn't have it, node is omitted). */
-export function brainstemFlow(brain: BrainRecord, modelId: string, modelName: string, flujoTools: string[] = []): unknown {
+ *  Only the eight tool-belt verbs are bound. FLUJO's own API (the built-in
+ *  "flujo" MCP server, where present) stays reachable through
+ *  list_skills/use_skill without bloating the bound schema. */
+export function brainstemFlow(brain: BrainRecord, modelId: string, modelName: string): unknown {
   const startId = crypto.randomUUID();
   const processId = crypto.randomUUID();
   const mcpId = crypto.randomUUID();
-  const flujoMcpId = crypto.randomUUID();
   const finishId = crypto.randomUUID();
   const tools = [...BRAINSTEM_TOOLS];
 
@@ -295,9 +274,6 @@ export function brainstemFlow(brain: BrainRecord, modelId: string, modelName: st
             excludeStartNodePrompt: false,
             mcpNodes: [
               { id: mcpId, properties: { boundServer: BRAINSTEM_NAME, enabledTools: tools } },
-              ...(flujoTools.length
-                ? [{ id: flujoMcpId, properties: { boundServer: FLUJO_SERVER_NAME, enabledTools: flujoTools } }]
-                : []),
             ],
           },
         },
@@ -312,20 +288,6 @@ export function brainstemFlow(brain: BrainRecord, modelId: string, modelName: st
           properties: { boundServer: BRAINSTEM_NAME, enabledTools: tools },
         },
       },
-      ...(flujoTools.length
-        ? [
-            {
-              id: flujoMcpId,
-              type: 'mcp',
-              position: { x: 540, y: 400 },
-              data: {
-                label: 'FLUJO API',
-                type: 'mcp',
-                properties: { boundServer: FLUJO_SERVER_NAME, enabledTools: flujoTools },
-              },
-            },
-          ]
-        : []),
       {
         id: finishId,
         type: 'finish',
@@ -337,7 +299,6 @@ export function brainstemFlow(brain: BrainRecord, modelId: string, modelName: st
       edge(startId, 'start-bottom', processId, 'process-top'),
       edge(processId, 'process-bottom', finishId, 'finish-top'),
       mcpEdge(processId, mcpId),
-      ...(flujoTools.length ? [mcpEdge(processId, flujoMcpId)] : []),
     ],
   };
 }
