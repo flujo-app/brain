@@ -10,7 +10,8 @@ import { FlujoClient, type FlujoFlow } from './flujo.js';
 import { provisionBrain, deprovisionBrain, rebuildBrain } from './provision.js';
 import { dockerAvailable, removeFlujoContainer } from './docker.js';
 import { ensureDefaultFlujo } from './spawnFlujo.js';
-import type { CreateBrainRequest, ModelSpec } from './types.js';
+import { loadPackages, missingSecrets, summarizePackage } from './packages.js';
+import type { CreateBrainRequest, ModelSpec, PackageSelection } from './types.js';
 
 const PORT = Number(process.env.PORT ?? 8090);
 const FLUJO_DEFAULT_URL = process.env.FLUJO_DEFAULT_URL ?? 'http://localhost:4200';
@@ -107,6 +108,27 @@ const brainAt = (url: string) => registry.list().find((b) => b.flujoUrl && normU
 
 api.get('/health', (_req, res) => res.json({ ok: true }));
 
+/** Starter packages the wizard can offer — summaries only, no item bodies. */
+api.get('/packages', async (_req, res) => {
+  res.json({ packages: (await loadPackages()).map(summarizePackage) });
+});
+
+/** 400-message when a packages selection cannot be applied, else null.
+ *  Checked up front so a doomed brain is never born. */
+async function packagesProblem(selections: PackageSelection[] | undefined): Promise<string | null> {
+  if (!selections?.length) return null;
+  const catalog = await loadPackages();
+  for (const sel of selections) {
+    const pkg = catalog.find((p) => p.id === sel.id);
+    if (!pkg) return `unknown package: ${sel.id}`;
+    const missing = missingSecrets(pkg, sel.secrets ?? {});
+    if (missing.length) {
+      return `package "${pkg.name}" is missing: ${missing.map((s) => s.label).join(', ')}`;
+    }
+  }
+  return null;
+}
+
 api.get('/brains', async (_req, res) => {
   res.json({
     brains: registry.list().map(publicBrain),
@@ -128,6 +150,8 @@ api.post('/brains', async (req, res) => {
   if (!body?.lifeGoal?.trim() || !body?.model) {
     return res.status(400).json({ error: 'lifeGoal and model are required' });
   }
+  const pkgProblem = await packagesProblem(body.packages);
+  if (pkgProblem) return res.status(400).json({ error: pkgProblem });
   // Without Docker only adopted brains are possible. Refuse up front instead
   // of birthing a brain whose provisioning is doomed (the lobby's wizard
   // forces adopt mode in this case; this guards any other client).
@@ -238,10 +262,12 @@ api.post('/brains/:id/grow', async (req, res) => {
   const brain = registry.get(req.params.id);
   if (!brain) return res.status(404).json({ error: 'no such brain' });
   if (brain.status === 'provisioning') return res.status(409).json({ error: 'already provisioning' });
-  const body = req.body as { lifeGoal?: string; model?: ModelSpec; heartbeat?: boolean; heartbeatCron?: string };
+  const body = req.body as { lifeGoal?: string; model?: ModelSpec; heartbeat?: boolean; heartbeatCron?: string; packages?: PackageSelection[] };
   if (!body?.lifeGoal?.trim() || !body?.model) {
     return res.status(400).json({ error: 'lifeGoal and model are required' });
   }
+  const pkgProblem = await packagesProblem(body.packages);
+  if (pkgProblem) return res.status(400).json({ error: pkgProblem });
   brain.lifeGoal = body.lifeGoal.trim();
   brain.status = 'provisioning';
   brain.statusDetail = undefined;
@@ -252,6 +278,7 @@ api.post('/brains/:id/grow', async (req, res) => {
     adoptUrl: brain.flujoUrl,
     heartbeat: body.heartbeat,
     heartbeatCron: body.heartbeatCron,
+    packages: body.packages,
   });
   res.status(202).json(publicBrain(brain));
 });

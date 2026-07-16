@@ -15,6 +15,7 @@ COPY manager/package.json manager/package-lock.json ./
 RUN npm ci --omit=dev
 COPY manager/tsconfig.json ./
 COPY manager/src ./src
+COPY manager/packages ./packages
 COPY --from=ui /app/dist /app/ui
 ENV PORT=80 UI_DIR=/app/ui DATA_DIR=/data NODE_ENV=production
 EXPOSE 80

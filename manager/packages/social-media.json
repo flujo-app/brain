@@ -1,0 +1,130 @@
+{
+  "id": "social-media",
+  "name": "Social Media",
+  "description": "Web-search skill, a post-drafting behaviour, and weekly content ideas (off by default). Skeleton — grow it into your own channels.",
+  "version": 1,
+  "secrets": [
+    {
+      "key": "brave_api_key",
+      "label": "Brave Search API key",
+      "hint": "https://brave.com/search/api/"
+    }
+  ],
+  "models": [],
+  "mcpServers": [
+    {
+      "name": "web-search",
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-brave-search"],
+      "env": { "BRAVE_API_KEY": "{{secret:brave_api_key}}" },
+      "disabled": false,
+      "autoApprove": [],
+      "rootPath": ""
+    }
+  ],
+  "flows": [
+    {
+      "id": "pkg-social-post-drafter",
+      "name": "post-drafter",
+      "description": "Draft social posts on a topic: research what is being said, then write 3 variants (short, thread, professional). Part of the Social Media starter package.",
+      "nodes": [
+        {
+          "id": "pkg-social-pd-start",
+          "type": "start",
+          "position": { "x": 250, "y": 100 },
+          "data": {
+            "label": "Post Drafter",
+            "type": "start",
+            "properties": { "promptTemplate": "You draft social media posts. Research the topic first if a search skill is available, then write 3 variants: one short punchy post, one thread outline, one professional (LinkedIn-style). No hashtag spam — at most 3." }
+          }
+        },
+        {
+          "id": "pkg-social-pd-process",
+          "type": "process",
+          "position": { "x": 250, "y": 260 },
+          "data": {
+            "id": "pkg-social-pd-process",
+            "label": "post-drafter",
+            "type": "process",
+            "properties": {
+              "boundModel": "{{brain.modelId}}",
+              "modelName": "{{brain.modelName}}",
+              "promptTemplate": "",
+              "excludeModelPrompt": false,
+              "excludeStartNodePrompt": false,
+              "mcpNodes": [
+                { "id": "pkg-social-pd-mcp", "properties": { "boundServer": "web-search", "enabledTools": [] } }
+              ]
+            }
+          }
+        },
+        {
+          "id": "pkg-social-pd-mcp",
+          "type": "mcp",
+          "position": { "x": 540, "y": 260 },
+          "data": {
+            "label": "MCP Node",
+            "type": "mcp",
+            "properties": { "boundServer": "web-search", "enabledTools": [] }
+          }
+        },
+        {
+          "id": "pkg-social-pd-finish",
+          "type": "finish",
+          "position": { "x": 250, "y": 430 },
+          "data": { "label": "Done", "type": "finish", "properties": {} }
+        }
+      ],
+      "edges": [
+        {
+          "id": "pkg-social-pd-start-process",
+          "type": "custom",
+          "animated": true,
+          "style": { "stroke": "#7F8C8D", "strokeWidth": 2 },
+          "markerEnd": { "type": "arrowclosed", "width": 20, "height": 20, "color": "#7F8C8D" },
+          "source": "pkg-social-pd-start",
+          "sourceHandle": "start-bottom",
+          "target": "pkg-social-pd-process",
+          "targetHandle": "process-top",
+          "data": { "edgeType": "standard" }
+        },
+        {
+          "id": "pkg-social-pd-process-finish",
+          "type": "custom",
+          "animated": true,
+          "style": { "stroke": "#7F8C8D", "strokeWidth": 2 },
+          "markerEnd": { "type": "arrowclosed", "width": 20, "height": 20, "color": "#7F8C8D" },
+          "source": "pkg-social-pd-process",
+          "sourceHandle": "process-bottom",
+          "target": "pkg-social-pd-finish",
+          "targetHandle": "finish-top",
+          "data": { "edgeType": "standard" }
+        },
+        {
+          "id": "pkg-social-pd-process-mcp",
+          "type": "mcpEdge",
+          "animated": false,
+          "style": { "stroke": "#1976d2", "strokeWidth": 2 },
+          "markerEnd": { "type": "arrowclosed", "width": 20, "height": 20, "color": "#1976d2" },
+          "markerStart": { "type": "arrowclosed", "width": 20, "height": 20, "color": "#1976d2" },
+          "source": "pkg-social-pd-process",
+          "sourceHandle": "process-right-mcp",
+          "target": "pkg-social-pd-mcp",
+          "targetHandle": "mcp-left",
+          "data": { "edgeType": "mcp" }
+        }
+      ]
+    }
+  ],
+  "plannedExecutions": [
+    {
+      "name": "weekly content ideas",
+      "enabled": false,
+      "flowId": "pkg-social-post-drafter",
+      "prompt": "Collect 5 content ideas for this week: what is trending in my field, what did I do recently that is worth sharing. Draft one post for the best idea.",
+      "saveConversations": true,
+      "trigger": { "type": "schedule", "cron": "0 0 10 * * 1", "catchUp": false }
+    }
+  ]
+}

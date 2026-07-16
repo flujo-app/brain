@@ -154,4 +154,9 @@ export class FlujoClient {
   createPlannedExecution(pe: unknown): Promise<unknown> {
     return this.req('/api/planned-executions', { method: 'POST', body: JSON.stringify(pe) });
   }
+
+  /** Listing wraps each execution in a state envelope. */
+  listPlannedExecutions(): Promise<{ paused?: boolean; executions?: Array<{ execution?: { id?: string; name?: string } }> }> {
+    return this.req('/api/planned-executions');
+  }
 }

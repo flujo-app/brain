@@ -274,7 +274,9 @@ function renderCard(b: Brain): void {
     b.status === 'ready' && b.editorUrl
       ? `<a class="open editor" href="${esc(b.editorUrl)}" target="_blank" rel="noopener">${esc(t('card.editor'))}</a>`
       : '';
-  const detail = b.status === 'error' && b.statusDetail ? `<p class="detail">${esc(b.statusDetail)}</p>` : '';
+  // Any statusDetail is worth showing: error causes, provisioning steps, and
+  // "born with warnings" notes (e.g. a starter package that half-applied).
+  const detail = b.statusDetail ? `<p class="detail">${esc(b.statusDetail)}</p>` : '';
   const born = t('card.born', { date: new Date(b.createdAt).toLocaleDateString(getLang()) });
   orbit.cardBody.innerHTML = `
     <header><h3>${esc(b.name)}</h3>
@@ -566,6 +568,10 @@ interface WizState {
   heartbeat: boolean;
   cron: string;
   wake: boolean;
+  /** Selected starter package ids (Advanced). */
+  packages: string[];
+  /** Secret values for selected packages, keyed `<pkgId>/<secretKey>`. */
+  pkgSecrets: Record<string, string>;
   busy: boolean;
   error: string | null;
 }
@@ -583,6 +589,8 @@ const freshWiz = (): WizState => ({
   heartbeat: true,
   cron: '0 */3 * * * *',
   wake: false,
+  packages: [],
+  pkgSecrets: {},
   busy: false,
   error: null,
 });
@@ -592,6 +600,43 @@ let wizStep: StepId = 'where';
 let wizOpen = false;
 let ollamaTags: string[] | null = null;
 let existingModels: Array<{ id: string; name: string; displayName?: string }> | null = null;
+
+// Starter packages (curated bundles of models/skills/behaviours/schedules the
+// manager offers). Loaded once; the soul step's Advanced section renders them.
+interface PackageSecretDecl {
+  key: string;
+  label: string;
+  hint?: string;
+  optional?: boolean;
+}
+interface PackageSummary {
+  id: string;
+  name: string;
+  description: string;
+  secrets: PackageSecretDecl[];
+  counts: { models: number; mcpServers: number; flows: number; plannedExecutions: number };
+}
+let packageCatalog: PackageSummary[] | null = null;
+
+function loadPackageCatalog(): void {
+  if (packageCatalog !== null) return;
+  void api<{ packages: PackageSummary[] }>('/packages')
+    .then((r) => {
+      packageCatalog = r.packages;
+      if (wizOpen && wizStep === 'soul') renderWizard();
+    })
+    .catch(() => {
+      packageCatalog = [];
+    });
+}
+
+/** Required secrets of the selected packages the user hasn't filled yet. */
+function pkgSecretsMissing(): boolean {
+  return wiz.packages.some((id) => {
+    const pkg = packageCatalog?.find((p) => p.id === id);
+    return pkg?.secrets.some((s) => !s.optional && !wiz.pkgSecrets[`${id}/${s.key}`]?.trim());
+  });
+}
 
 // Model search: the provider's official catalog, fetched live via the manager.
 interface CatalogModel {
@@ -699,6 +744,7 @@ function loadExistingModels(): void {
 
 function openWizard(): void {
   wiz = freshWiz();
+  loadPackageCatalog();
   // No Docker → managed brains are impossible; every new brain adopts the
   // stack's default FLUJO instance.
   if (!dockerAvailable) {
@@ -950,18 +996,45 @@ function stepBodyHtml(): string {
         ? `<label class="check"><input type="checkbox" id="wiz-adopt"${wiz.adopt ? ' checked' : ''} /> ${esc(t('wiz.adv.adopt'))}</label>`
         : '';
       const adoptNote = dockerAvailable ? '' : `<p class="wiz-adoptnote">🐳 ${esc(t('wiz.soul.adoptForced'))}</p>`;
+      // Starter packages: one checkbox per bundle; picking one with secrets
+      // unfolds the inputs for them right below it.
+      const pkgRows = (packageCatalog ?? [])
+        .map((pkg) => {
+          const checked = wiz.packages.includes(pkg.id);
+          const secretRows =
+            checked && pkg.secrets.length
+              ? pkg.secrets
+                  .map((s) => {
+                    const hint =
+                      s.hint && /^https?:\/\//.test(s.hint)
+                        ? ` <a class="wiz-pkg-hint" href="${esc(s.hint)}" target="_blank" rel="noopener">${esc(t('wiz.key.get'))}</a>`
+                        : '';
+                    return `<label class="check wiz-pkg-secret">${esc(s.label)}${hint}
+                      <input type="password" autocomplete="off" placeholder="${esc(t('wiz.key.ph'))}"
+                        data-pkg-secret="${esc(`${pkg.id}/${s.key}`)}" value="${esc(wiz.pkgSecrets[`${pkg.id}/${s.key}`] ?? '')}" />
+                    </label>`;
+                  })
+                  .join('')
+              : '';
+          return `<label class="check wiz-pkg"><input type="checkbox" data-pkg="${esc(pkg.id)}"${checked ? ' checked' : ''} />
+              <span class="wiz-pkg-txt"><b>${esc(pkg.name)}</b><small>${esc(pkg.description)}</small></span>
+            </label>${secretRows}`;
+        })
+        .join('');
+      const packagesGroup = pkgRows ? `<p class="wiz-group">${esc(t('wiz.adv.packages'))}</p>${pkgRows}` : '';
       return `<h3>${esc(t('wiz.soul.title'))}</h3>
         <label class="wiz-field">${esc(t('wiz.soul.goal'))}
           <textarea id="wiz-goal" rows="3" placeholder="${esc(t('wiz.soul.goalPh'))}">${esc(wiz.goal)}</textarea>
           <small>${esc(t('wiz.soul.goalHint'))}</small>
         </label>
         ${adoptNote}
-        <details class="wiz-adv"${(dockerAvailable && wiz.adopt) || wiz.wake || !wiz.heartbeat ? ' open' : ''}>
+        <details class="wiz-adv"${(dockerAvailable && wiz.adopt) || wiz.wake || !wiz.heartbeat || wiz.packages.length ? ' open' : ''}>
           <summary>${esc(t('wiz.adv'))}</summary>
           ${adoptRow}
           <label class="check wiz-existing${wiz.adopt ? '' : ' hidden'}">${esc(t('wiz.adv.existing'))}
             <select id="wiz-existing">${existingOpts}</select>
           </label>
+          ${packagesGroup}
           <label class="check"><input type="checkbox" id="wiz-heartbeat"${wiz.heartbeat ? ' checked' : ''} /> ${esc(t('wiz.adv.heartbeat'))}</label>
           <label class="check cron${wiz.heartbeat ? '' : ' hidden'}">${esc(t('wiz.adv.cron'))}
             <input id="wiz-cron" value="${esc(wiz.cron)}" autocomplete="off" />
@@ -1162,9 +1235,24 @@ function wireWizard(): void {
     const heartbeat = wizard.querySelector<HTMLInputElement>('#wiz-heartbeat')!;
     const sync = () => {
       wiz.goal = goalInput.value.trim();
-      createBtn.disabled = !wiz.goal || wiz.busy;
+      createBtn.disabled = !wiz.goal || wiz.busy || pkgSecretsMissing();
     };
     goalInput.addEventListener('input', sync);
+    // Starter packages: toggling re-renders (secret inputs fold in and out);
+    // typing a secret only updates state, so focus stays in the field.
+    wizard.querySelectorAll<HTMLInputElement>('input[data-pkg]').forEach((box) => {
+      box.addEventListener('change', () => {
+        const id = box.dataset.pkg!;
+        wiz.packages = box.checked ? [...wiz.packages, id] : wiz.packages.filter((p) => p !== id);
+        renderWizard();
+      });
+    });
+    wizard.querySelectorAll<HTMLInputElement>('input[data-pkg-secret]').forEach((input) => {
+      input.addEventListener('input', () => {
+        wiz.pkgSecrets[input.dataset.pkgSecret!] = input.value;
+        sync();
+      });
+    });
     adopt?.addEventListener('change', () => {
       wiz.adopt = adopt.checked;
       wizard.querySelector('.wiz-existing')?.classList.toggle('hidden', !wiz.adopt);
@@ -1197,6 +1285,19 @@ async function createBrain(): Promise<void> {
         ? { mode: 'byok' as const, provider: wiz.provider!, model: wiz.model!, apiKey: wiz.apiKey }
         : { mode: 'ollama' as const, tag: wiz.model!, baseUrl: wiz.where === 'network' ? wiz.networkUrl : undefined };
 
+  // Selected starter packages, each with just its own declared secrets.
+  const packages = wiz.packages.length
+    ? wiz.packages.map((id) => {
+        const decls = packageCatalog?.find((p) => p.id === id)?.secrets ?? [];
+        const secrets = Object.fromEntries(
+          decls
+            .map((s) => [s.key, wiz.pkgSecrets[`${id}/${s.key}`]?.trim() ?? ''] as const)
+            .filter(([, v]) => v),
+        );
+        return { id, secrets };
+      })
+    : undefined;
+
   const body = {
     // No name — the manager generates a friendly one.
     lifeGoal: wiz.goal,
@@ -1205,6 +1306,7 @@ async function createBrain(): Promise<void> {
     heartbeat: wiz.heartbeat,
     heartbeatCron: wiz.cron || undefined,
     wake: wiz.wake,
+    packages,
   };
 
   wiz.busy = true;

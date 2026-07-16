@@ -1,0 +1,130 @@
+{
+  "id": "coding",
+  "name": "Coding",
+  "description": "GitHub skill, a code-review behaviour, and a daily repo digest (off by default). Skeleton — grow it into your own workflow.",
+  "version": 1,
+  "secrets": [
+    {
+      "key": "github_token",
+      "label": "GitHub personal access token",
+      "hint": "https://github.com/settings/personal-access-tokens"
+    }
+  ],
+  "models": [],
+  "mcpServers": [
+    {
+      "name": "github",
+      "transport": "stdio",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": { "GITHUB_PERSONAL_ACCESS_TOKEN": "{{secret:github_token}}" },
+      "disabled": false,
+      "autoApprove": [],
+      "rootPath": ""
+    }
+  ],
+  "flows": [
+    {
+      "id": "pkg-coding-code-review",
+      "name": "code-review",
+      "description": "Review a diff, PR or file: correctness first, then clarity. Part of the Coding starter package.",
+      "nodes": [
+        {
+          "id": "pkg-coding-cr-start",
+          "type": "start",
+          "position": { "x": 250, "y": 100 },
+          "data": {
+            "label": "Code Review",
+            "type": "start",
+            "properties": { "promptTemplate": "You review code. Be concrete: name the file and line, state the defect, suggest the fix. Correctness bugs first, style last." }
+          }
+        },
+        {
+          "id": "pkg-coding-cr-process",
+          "type": "process",
+          "position": { "x": 250, "y": 260 },
+          "data": {
+            "id": "pkg-coding-cr-process",
+            "label": "code-review",
+            "type": "process",
+            "properties": {
+              "boundModel": "{{brain.modelId}}",
+              "modelName": "{{brain.modelName}}",
+              "promptTemplate": "",
+              "excludeModelPrompt": false,
+              "excludeStartNodePrompt": false,
+              "mcpNodes": [
+                { "id": "pkg-coding-cr-mcp", "properties": { "boundServer": "github", "enabledTools": [] } }
+              ]
+            }
+          }
+        },
+        {
+          "id": "pkg-coding-cr-mcp",
+          "type": "mcp",
+          "position": { "x": 540, "y": 260 },
+          "data": {
+            "label": "MCP Node",
+            "type": "mcp",
+            "properties": { "boundServer": "github", "enabledTools": [] }
+          }
+        },
+        {
+          "id": "pkg-coding-cr-finish",
+          "type": "finish",
+          "position": { "x": 250, "y": 430 },
+          "data": { "label": "Done", "type": "finish", "properties": {} }
+        }
+      ],
+      "edges": [
+        {
+          "id": "pkg-coding-cr-start-process",
+          "type": "custom",
+          "animated": true,
+          "style": { "stroke": "#7F8C8D", "strokeWidth": 2 },
+          "markerEnd": { "type": "arrowclosed", "width": 20, "height": 20, "color": "#7F8C8D" },
+          "source": "pkg-coding-cr-start",
+          "sourceHandle": "start-bottom",
+          "target": "pkg-coding-cr-process",
+          "targetHandle": "process-top",
+          "data": { "edgeType": "standard" }
+        },
+        {
+          "id": "pkg-coding-cr-process-finish",
+          "type": "custom",
+          "animated": true,
+          "style": { "stroke": "#7F8C8D", "strokeWidth": 2 },
+          "markerEnd": { "type": "arrowclosed", "width": 20, "height": 20, "color": "#7F8C8D" },
+          "source": "pkg-coding-cr-process",
+          "sourceHandle": "process-bottom",
+          "target": "pkg-coding-cr-finish",
+          "targetHandle": "finish-top",
+          "data": { "edgeType": "standard" }
+        },
+        {
+          "id": "pkg-coding-cr-process-mcp",
+          "type": "mcpEdge",
+          "animated": false,
+          "style": { "stroke": "#1976d2", "strokeWidth": 2 },
+          "markerEnd": { "type": "arrowclosed", "width": 20, "height": 20, "color": "#1976d2" },
+          "markerStart": { "type": "arrowclosed", "width": 20, "height": 20, "color": "#1976d2" },
+          "source": "pkg-coding-cr-process",
+          "sourceHandle": "process-right-mcp",
+          "target": "pkg-coding-cr-mcp",
+          "targetHandle": "mcp-left",
+          "data": { "edgeType": "mcp" }
+        }
+      ]
+    }
+  ],
+  "plannedExecutions": [
+    {
+      "name": "daily repo digest",
+      "enabled": false,
+      "flowId": "pkg-coding-code-review",
+      "prompt": "Summarize what changed in the repositories you can reach since yesterday: merged PRs, new issues, anything needing review.",
+      "saveConversations": true,
+      "trigger": { "type": "schedule", "cron": "0 0 9 * * *", "catchUp": false }
+    }
+  ]
+}

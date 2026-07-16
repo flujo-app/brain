@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import { FlujoClient, type FlujoModel, type McpServerConfig } from './flujo.js';
 import { createFlujoContainer, flujoImageAvailable, removeFlujoContainer } from './docker.js';
 import { BRAINSTEM_NAME, brainstemFlow, WAKE_PROMPT } from './brainstem.js';
+import { applyPackage, loadPackages } from './packages.js';
 import type { Registry } from './registry.js';
 import type { BrainRecord, CreateBrainRequest, ModelSpec } from './types.js';
 
@@ -146,6 +147,9 @@ export async function provisionBrain(registry: Registry, brain: BrainRecord, req
     brain.statusDetail = detail;
     await registry.put(brain);
   };
+  // Non-fatal problems (a package that half-applied, a failed heartbeat) —
+  // the brain still comes alive, but the card says what went sideways.
+  const warnings: string[] = [];
 
   try {
     // 1. The instance.
@@ -210,7 +214,7 @@ export async function provisionBrain(registry: Registry, brain: BrainRecord, req
       await ensureStandardSkills(flujo, !req.adoptUrl);
     } catch (err) {
       // Not fatal — a skill that fails to connect can be forgotten later.
-      brain.statusDetail = `standard skills incomplete: ${(err as Error).message}`;
+      warnings.push(`standard skills incomplete: ${(err as Error).message}`);
     }
 
     // 4. The brain-stem flow (life goal + model + tool belt). Only the eight
@@ -225,6 +229,34 @@ export async function provisionBrain(registry: Registry, brain: BrainRecord, req
       const flow = brainstemFlow(brain, model.id, model.name) as { id: string };
       await flujo.createFlow(flow);
       brain.brainstemFlowId = flow.id;
+    }
+
+    // 4b. Starter packages: pour the selected bundles (models, skills,
+    //     behaviours, planned executions) into the newborn brain. The stem
+    //     already exists, so package flows can bind the brain's model via
+    //     {{brain.modelId}}. Secrets were validated by the API up front;
+    //     apply failures are warnings, not stillbirths.
+    if (req.packages?.length) {
+      const catalog = await loadPackages();
+      for (const sel of req.packages) {
+        const pkg = catalog.find((p) => p.id === sel.id);
+        if (!pkg) {
+          warnings.push(`package "${sel.id}" not found`);
+          continue;
+        }
+        await step(`unpacking the ${pkg.name} package…`);
+        try {
+          await applyPackage(flujo, pkg, sel.secrets ?? {}, {
+            modelId: model.id,
+            modelName: model.name,
+            brainName: brain.name,
+            lifeGoal: brain.lifeGoal,
+            managed: !req.adoptUrl,
+          });
+        } catch (err) {
+          warnings.push(`package "${pkg.name}": ${(err as Error).message}`);
+        }
+      }
     }
 
     // 5. The heartbeat: FLUJO's own scheduler wakes the mind.
@@ -244,7 +276,7 @@ export async function provisionBrain(registry: Registry, brain: BrainRecord, req
         });
       } catch (err) {
         // Not fatal — the brain works, it just doesn't wake on its own.
-        brain.statusDetail = `heartbeat failed: ${(err as Error).message}`;
+        warnings.push(`heartbeat failed: ${(err as Error).message}`);
       }
     }
 
@@ -255,7 +287,7 @@ export async function provisionBrain(registry: Registry, brain: BrainRecord, req
     }
 
     brain.status = 'ready';
-    brain.statusDetail = undefined;
+    brain.statusDetail = warnings.length ? `⚠ ${warnings.join(' · ')}` : undefined;
     await registry.put(brain);
   } catch (err) {
     brain.status = 'error';

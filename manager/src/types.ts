@@ -32,11 +32,21 @@ export type ModelSpec =
   /** Reuse a model that already exists in the FLUJO instance (adopted brains). */
   | { mode: 'existing'; id: string };
 
+/** One starter package picked in the wizard, with the user's secret values
+ *  ({{secret:key}} placeholders in the manifest). Secrets pass straight
+ *  through to FLUJO — the manager never persists them. */
+export interface PackageSelection {
+  id: string;
+  secrets?: Record<string, string>;
+}
+
 export interface CreateBrainRequest {
   /** Optional — the manager auto-generates a friendly name when absent. */
   name?: string;
   lifeGoal: string;
   model: ModelSpec;
+  /** Starter packages to pour into the newborn brain (wizard → Advanced). */
+  packages?: PackageSelection[];
   /** Adopt a running FLUJO instead of provisioning a container (dev mode). */
   adoptUrl?: string;
   /** Create the planned-execution heartbeat that wakes the brain-stem. */

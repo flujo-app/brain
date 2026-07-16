@@ -1187,6 +1187,18 @@ body.lobby header, body.lobby section, body.lobby main { position: static; }
 .wiz-adv input[type="checkbox"] { width: auto; accent-color: var(--model); }
 .wiz-adv .cron input, .wiz-adv select { width: auto; flex: 1; padding: 7px 10px; font-size: 12px; }
 
+/* Starter packages inside Advanced: checkbox rows with a description line,
+   and the secret inputs a selected package unfolds. */
+.wiz-adv .wiz-group { margin: 10px 14px 2px; }
+.wiz-pkg { align-items: flex-start; }
+.wiz-pkg input[type="checkbox"] { margin-top: 3px; }
+.wiz-pkg-txt { display: flex; flex-direction: column; gap: 2px; }
+.wiz-pkg-txt small { font-size: 11px; color: var(--muted); }
+.wiz-pkg-secret { flex-wrap: wrap; padding-left: 40px !important; font-size: 12px; color: var(--muted); }
+.wiz-pkg-secret input { width: 100%; flex-basis: 100%; padding: 7px 10px; font-size: 12px; }
+.wiz-pkg-hint { font-size: 11px; color: var(--model); text-decoration: none; }
+.wiz-pkg-hint:hover { text-decoration: underline; }
+
 .wiz-footer {
   position: static;
   display: flex; align-items: center; justify-content: space-between; gap: 12px;

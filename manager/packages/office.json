@@ -1,0 +1,155 @@
+{
+  "id": "office",
+  "name": "Office",
+  "description": "Meeting-notes and email-drafting behaviours plus a morning briefing (off by default). Skeleton — no keys needed.",
+  "version": 1,
+  "secrets": [],
+  "models": [],
+  "mcpServers": [],
+  "flows": [
+    {
+      "id": "pkg-office-meeting-notes",
+      "name": "meeting-notes",
+      "description": "Turn a raw meeting transcript or bullet notes into structured minutes: decisions, action items with owners, open questions. Part of the Office starter package.",
+      "nodes": [
+        {
+          "id": "pkg-office-mn-start",
+          "type": "start",
+          "position": { "x": 250, "y": 100 },
+          "data": {
+            "label": "Meeting Notes",
+            "type": "start",
+            "properties": { "promptTemplate": "You turn raw meeting input into minutes: 1) decisions, 2) action items (owner, due date if stated), 3) open questions. Keep the participants' wording for decisions." }
+          }
+        },
+        {
+          "id": "pkg-office-mn-process",
+          "type": "process",
+          "position": { "x": 250, "y": 260 },
+          "data": {
+            "id": "pkg-office-mn-process",
+            "label": "meeting-notes",
+            "type": "process",
+            "properties": {
+              "boundModel": "{{brain.modelId}}",
+              "modelName": "{{brain.modelName}}",
+              "promptTemplate": "",
+              "excludeModelPrompt": false,
+              "excludeStartNodePrompt": false,
+              "mcpNodes": []
+            }
+          }
+        },
+        {
+          "id": "pkg-office-mn-finish",
+          "type": "finish",
+          "position": { "x": 250, "y": 430 },
+          "data": { "label": "Done", "type": "finish", "properties": {} }
+        }
+      ],
+      "edges": [
+        {
+          "id": "pkg-office-mn-start-process",
+          "type": "custom",
+          "animated": true,
+          "style": { "stroke": "#7F8C8D", "strokeWidth": 2 },
+          "markerEnd": { "type": "arrowclosed", "width": 20, "height": 20, "color": "#7F8C8D" },
+          "source": "pkg-office-mn-start",
+          "sourceHandle": "start-bottom",
+          "target": "pkg-office-mn-process",
+          "targetHandle": "process-top",
+          "data": { "edgeType": "standard" }
+        },
+        {
+          "id": "pkg-office-mn-process-finish",
+          "type": "custom",
+          "animated": true,
+          "style": { "stroke": "#7F8C8D", "strokeWidth": 2 },
+          "markerEnd": { "type": "arrowclosed", "width": 20, "height": 20, "color": "#7F8C8D" },
+          "source": "pkg-office-mn-process",
+          "sourceHandle": "process-bottom",
+          "target": "pkg-office-mn-finish",
+          "targetHandle": "finish-top",
+          "data": { "edgeType": "standard" }
+        }
+      ]
+    },
+    {
+      "id": "pkg-office-email-draft",
+      "name": "email-draft",
+      "description": "Draft or rewrite an email in the right tone: give it the goal, the recipient, and any raw points. Part of the Office starter package.",
+      "nodes": [
+        {
+          "id": "pkg-office-ed-start",
+          "type": "start",
+          "position": { "x": 250, "y": 100 },
+          "data": {
+            "label": "Email Draft",
+            "type": "start",
+            "properties": { "promptTemplate": "You draft emails. Ask nothing back — produce a subject line and body from what you were given. Match the tone to the recipient; default to friendly-professional and short." }
+          }
+        },
+        {
+          "id": "pkg-office-ed-process",
+          "type": "process",
+          "position": { "x": 250, "y": 260 },
+          "data": {
+            "id": "pkg-office-ed-process",
+            "label": "email-draft",
+            "type": "process",
+            "properties": {
+              "boundModel": "{{brain.modelId}}",
+              "modelName": "{{brain.modelName}}",
+              "promptTemplate": "",
+              "excludeModelPrompt": false,
+              "excludeStartNodePrompt": false,
+              "mcpNodes": []
+            }
+          }
+        },
+        {
+          "id": "pkg-office-ed-finish",
+          "type": "finish",
+          "position": { "x": 250, "y": 430 },
+          "data": { "label": "Done", "type": "finish", "properties": {} }
+        }
+      ],
+      "edges": [
+        {
+          "id": "pkg-office-ed-start-process",
+          "type": "custom",
+          "animated": true,
+          "style": { "stroke": "#7F8C8D", "strokeWidth": 2 },
+          "markerEnd": { "type": "arrowclosed", "width": 20, "height": 20, "color": "#7F8C8D" },
+          "source": "pkg-office-ed-start",
+          "sourceHandle": "start-bottom",
+          "target": "pkg-office-ed-process",
+          "targetHandle": "process-top",
+          "data": { "edgeType": "standard" }
+        },
+        {
+          "id": "pkg-office-ed-process-finish",
+          "type": "custom",
+          "animated": true,
+          "style": { "stroke": "#7F8C8D", "strokeWidth": 2 },
+          "markerEnd": { "type": "arrowclosed", "width": 20, "height": 20, "color": "#7F8C8D" },
+          "source": "pkg-office-ed-process",
+          "sourceHandle": "process-bottom",
+          "target": "pkg-office-ed-finish",
+          "targetHandle": "finish-top",
+          "data": { "edgeType": "standard" }
+        }
+      ]
+    }
+  ],
+  "plannedExecutions": [
+    {
+      "name": "morning briefing",
+      "enabled": false,
+      "flowId": "pkg-office-meeting-notes",
+      "prompt": "Prepare a short morning briefing: what is on today, what was decided yesterday, what needs an answer from me.",
+      "saveConversations": true,
+      "trigger": { "type": "schedule", "cron": "0 30 8 * * 1-5", "catchUp": false }
+    }
+  ]
+}
