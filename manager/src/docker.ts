@@ -9,7 +9,7 @@ import Docker from 'dockerode';
 
 // The browser-capable image (FLUJO + headless Chromium + Playwright MCP,
 // see docker/flujo-browser) — brains born from it carry the "browser" skill.
-const FLUJO_IMAGE = process.env.FLUJO_IMAGE ?? 'ghcr.io/mario-andreschak/flujo-browser:latest';
+const FLUJO_IMAGE = process.env.FLUJO_IMAGE ?? 'ghcr.io/flujo-app/flujo-browser:latest';
 const NETWORK = process.env.DOCKER_NETWORK ?? 'brain-net';
 
 let docker: Docker | null = null;

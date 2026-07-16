@@ -26,7 +26,7 @@ services:
       # Same instance as the browser reaches it (for editor links in the UI).
       - FLUJO_DEFAULT_PUBLIC_URL=http://127.0.0.1:4200
       - OLLAMA_URL=http://ollama:11434
-      - FLUJO_IMAGE=ghcr.io/mario-andreschak/flujo-browser:latest
+      - FLUJO_IMAGE=ghcr.io/flujo-app/flujo-browser:latest
       - DOCKER_NETWORK=brain-net
       - MANAGER_INTERNAL_URL=http://brain
     depends_on:
@@ -44,7 +44,7 @@ services:
     # is born from the same image. To pull a prebuilt browser image instead of
     # building, run `docker compose pull flujo` once.
     build: ./docker/flujo-browser
-    image: ghcr.io/mario-andreschak/flujo-browser:latest
+    image: ghcr.io/flujo-app/flujo-browser:latest
     # FLUJO's own UI (flow editor) — localhost only. The editor can't live
     # behind a sub-path proxy, so it keeps its own port.
     ports:
