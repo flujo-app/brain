@@ -1,7 +1,7 @@
 import './style.css';
 import { fetchBrain, flujoBase, watchBrain } from './data/loader';
 import { ExecutionWatcher, type BrainActivityEvent } from './data/execution';
-import { HeartbeatWatcher, setHeartbeatTempo } from './data/heartbeat';
+import { HeartbeatWatcher, setHeartbeatTempo, beatNow } from './data/heartbeat';
 import { Brain } from './scene/brain';
 import { Brain2D } from './scene2d/brain2d';
 import { History2D } from './scene2d/history2d';
@@ -179,10 +179,19 @@ async function boot() {
     aiDock.handleExecution(e);
   }).start();
 
-  // The last heartbeat's transcript, top right while nothing is focused.
-  new HeartbeatWatcher((h) => hud.setHeartbeat(h)).start();
-  // The tempo slider re-arms the heartbeat's schedule in FLUJO.
+  // The brain's vitals — every planned execution as a heartbeat, in the top
+  // bar next to pause/resume, always visible. FLUJO is the source of truth.
+  // The dock's presence orb also pulses with every fresh beat.
+  new HeartbeatWatcher((state) => {
+    hud.setHeartbeat(state);
+    aiDock.setHeartbeat(state);
+  }).start();
+  // The tempo sliders re-arm each heartbeat's schedule in FLUJO.
   hud.onTempo = (executionId, cron) => setHeartbeatTempo(executionId, cron);
+  // ⚡ beat now — fire a beat immediately. The promise resolves only when the
+  // run itself finishes (FLUJO waits); the HUD doesn't block on it and the
+  // watcher shows the run live.
+  hud.onBeatNow = (executionId) => beatNow(executionId);
 
   // If a brain-manager is serving us, offer the lobby.
   fetch('/api/health')

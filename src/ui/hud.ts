@@ -1,6 +1,6 @@
 import type { BrainGraph, InnerNode, Neuron, ServerStatus, Synapse, SynapseKind } from '../types';
 import type { GroupMode } from '../grouping';
-import type { HeartbeatInfo } from '../data/heartbeat';
+import type { HeartbeatInfo, HeartbeatState } from '../data/heartbeat';
 import { NODE_TYPE_COLORS, SYNAPSE_COLORS, nodeTypeLabel, providerLabel } from '../theme';
 
 const STATUS_COLORS: Record<ServerStatus, string> = {
@@ -129,10 +129,14 @@ export class Hud {
   /** True while a behaviour / node is selected (reader + panel visible). */
   private selectionOpen = false;
   private panelCollapsed = localStorage.getItem(PANEL_COLLAPSED_KEY) === '1';
-  /** Last heartbeat data (shown top-right while nothing is selected). */
-  private heartbeatInfo: HeartbeatInfo | null = null;
-  /** True while the user holds the tempo slider — polls must not snap it back. */
+  /** Last heartbeat data (the life cluster in the top bar, always visible). */
+  private hbState: HeartbeatState | null = null;
+  /** The beats dropdown (all planned executions) is open. */
+  private hbPanelOpen = false;
+  /** True while the user holds a tempo slider — polls must not snap it back. */
   private tempoDragging = false;
+  /** Last whole second the beat rows' countdowns were refreshed at. */
+  private hbRowTick = 0;
   /** Every neuron in the current graph, for the search results dropdown. */
   private neurons: Neuron[] = [];
   /** Behaviours currently matching the search box, in display order. */
@@ -153,9 +157,11 @@ export class Hud {
   onBackToBehaviour: () => void = () => {};
   /** Jump focus to another behaviour (subflow node link). */
   onFocusBehaviour: (id: string) => void = () => {};
-  /** Tempo slider: re-arm the heartbeat with a new cron. */
+  /** Tempo slider: re-arm a heartbeat with a new cron. */
   onTempo: (executionId: string, cron: string) => void | Promise<void> = () => {};
-  /** 💬 on the heartbeat bar: open its conversation in the chat dock. */
+  /** ⚡ beat now: fire a planned execution immediately. */
+  onBeatNow: (executionId: string) => void | Promise<void> = () => {};
+  /** 💬 on a heartbeat row: open its conversation in the chat dock. */
   onOpenHeartbeat: (conversationId: string) => void = () => {};
   /**
    * The selected behaviour changed (null = overview, or an ability selected).
@@ -215,27 +221,52 @@ export class Hud {
     if (savedW) this.panel.style.width = `${this.clampPanelWidth(savedW)}px`;
     this.initPanelResize();
 
-    // Tempo slider: label follows the thumb live; releasing re-arms the beat.
-    const tempo = this.$<HTMLInputElement>('hb-tempo-slider');
-    tempo.addEventListener('pointerdown', () => (this.tempoDragging = true));
-    tempo.addEventListener('pointerup', () => (this.tempoDragging = false));
-    tempo.addEventListener('input', () => {
-      this.$('hb-tempo-label').textContent = TEMPO_STOPS[Number(tempo.value)]?.label ?? '';
-    });
-    tempo.addEventListener('change', () => {
-      this.tempoDragging = false;
-      const stop = TEMPO_STOPS[Number(tempo.value)];
-      const id = this.heartbeatInfo?.executionId;
-      if (stop && id) {
-        void Promise.resolve(this.onTempo(id, stop.cron)).catch(() => {
-          this.$('hb-tempo-label').textContent = '⚠ change failed';
-        });
-      }
+    // The life cluster: ♥ toggles the all-beats dropdown, ⚡ fires the primary
+    // beat now; every dropdown row has its own tempo slider / ⚡ / 💬.
+    this.$('heartbeat').addEventListener('click', () => this.setHbPanelOpen(!this.hbPanelOpen));
+    this.$('hb-beat-now').addEventListener('click', () => {
+      const p = this.hbPrimary();
+      if (p) this.fireBeat(p.executionId, this.$('hb-beat-now'));
     });
 
-    this.$('hb-open').addEventListener('click', () => {
-      const id = this.heartbeatInfo?.conversationId;
-      if (id) this.onOpenHeartbeat(id);
+    const hbPanel = this.$('hb-panel');
+    // Tempo sliders: label follows the thumb live; releasing re-arms the beat.
+    // While a thumb is held, polls must not rebuild the panel under the hand.
+    hbPanel.addEventListener('pointerdown', (e) => {
+      if ((e.target as HTMLElement).closest('input[type="range"]')) this.tempoDragging = true;
+    });
+    hbPanel.addEventListener('pointerup', () => (this.tempoDragging = false));
+    hbPanel.addEventListener('input', (e) => {
+      const input = e.target as HTMLInputElement;
+      const row = input.closest<HTMLElement>('.hb-row');
+      if (!row || input.type !== 'range') return;
+      const label = row.querySelector<HTMLElement>('.hb-tempo-label');
+      if (label) label.textContent = TEMPO_STOPS[Number(input.value)]?.label ?? '';
+    });
+    hbPanel.addEventListener('change', (e) => {
+      const input = e.target as HTMLInputElement;
+      const row = input.closest<HTMLElement>('.hb-row');
+      if (!row?.dataset.id || input.type !== 'range') return;
+      this.tempoDragging = false;
+      const stop = TEMPO_STOPS[Number(input.value)];
+      if (!stop) return;
+      void Promise.resolve(this.onTempo(row.dataset.id, stop.cron)).catch(() => {
+        const label = row.querySelector<HTMLElement>('.hb-tempo-label');
+        if (label) label.textContent = '⚠ change failed';
+      });
+    });
+    hbPanel.addEventListener('click', (e) => {
+      const btn = (e.target as HTMLElement).closest<HTMLButtonElement>('button');
+      const row = (e.target as HTMLElement).closest<HTMLElement>('.hb-row');
+      if (!btn || !row?.dataset.id) return;
+      if (btn.classList.contains('hb-run')) this.fireBeat(row.dataset.id, btn);
+      else if (btn.classList.contains('hb-chat') && btn.dataset.conv) this.onOpenHeartbeat(btn.dataset.conv);
+    });
+    // Click-away closes the dropdown.
+    document.addEventListener('pointerdown', (e) => {
+      if (!this.hbPanelOpen) return;
+      const t = e.target as HTMLElement;
+      if (!t.closest('#hb-panel') && !t.closest('#heartbeat')) this.setHbPanelOpen(false);
     });
   }
 
@@ -339,14 +370,87 @@ export class Hud {
     input.blur();
   }
 
-  // ---- heartbeat ECG ---------------------------------------------------------
+  // ---- heartbeat (life cluster + beats dropdown) -------------------------------
 
-  /** Run the ECG only while the bar is actually on screen. */
+  /** The beat the top-bar ECG follows (the watcher sorts: running, then soonest). */
+  private hbPrimary(): HeartbeatInfo | null {
+    return this.hbState?.beats[0] ?? null;
+  }
+
+  private setHbPanelOpen(open: boolean): void {
+    this.hbPanelOpen = open;
+    this.$('hb-panel').classList.toggle('hidden', !open);
+    this.$('heartbeat').setAttribute('aria-expanded', open ? 'true' : 'false');
+    if (open) this.renderHbPanel();
+  }
+
+  /** Fire one beat with instant visual feedback; the poller confirms the run. */
+  private fireBeat(executionId: string, btn: HTMLElement): void {
+    btn.classList.add('firing');
+    setTimeout(() => btn.classList.remove('firing'), 1600);
+    void Promise.resolve(this.onBeatNow(executionId)).catch(() => {
+      btn.classList.remove('firing');
+      btn.title = '⚠ beat failed — is FLUJO reachable?';
+    });
+  }
+
+  /** One beat's status line: beating… / next in… / last… / off. */
+  private hbWhen(b: HeartbeatInfo): string {
+    if (b.running) return 'beating…';
+    if (this.hbState?.paused) return b.firedAt ? `paused · last ${relTime(b.firedAt)}` : 'paused';
+    if (!b.enabled) return b.firedAt ? `off · last ${relTime(b.firedAt)}` : 'off';
+    if (b.nextRun) {
+      const ms = Date.parse(b.nextRun) - Date.now();
+      if (Number.isFinite(ms)) return ms <= 0 ? 'due…' : `next in ${fmtCountdown(ms)}`;
+    }
+    if (b.firedAt) return `last ${relTime(b.firedAt)}`;
+    return 'never fired';
+  }
+
+  /** The dropdown: EVERY planned execution rendered as a heartbeat row. */
+  private renderHbPanel(): void {
+    const state = this.hbState;
+    const box = this.$('hb-panel');
+    if (!state?.beats.length) {
+      box.innerHTML = `<p class="hb-empty">${
+        state?.paused ? 'paused — no heartbeat is armed.' : 'no heartbeats yet — ask the brain for one below.'
+      }</p>`;
+      return;
+    }
+    box.innerHTML = state.beats
+      .map((b) => {
+        const i = tempoIndexOf(b.cron);
+        const exact = b.cron != null && cronSeconds(b.cron) === TEMPO_STOPS[i].s;
+        const tempo = b.cron
+          ? `<div class="hb-tempo">
+              <span class="t">tempo</span>
+              <input type="range" min="0" max="${TEMPO_STOPS.length - 1}" step="1" value="${i}" aria-label="tempo of ${esc(b.name)}" />
+              <span class="hb-tempo-label">${esc(exact ? TEMPO_STOPS[i].label : b.cron!)}</span>
+            </div>`
+          : '';
+        return `<div class="hb-row${b.running ? ' running' : ''}${b.enabled ? '' : ' off'}" data-id="${esc(b.executionId)}">
+          <div class="hb-row-head">
+            <span class="beat">♥</span>
+            <b class="hb-name" title="${esc(b.name)}">${esc(b.name)}</b>
+            <span class="hb-when">${esc(this.hbWhen(b))}</span>
+            <button class="hb-run" title="beat now">⚡</button>
+            <button class="hb-chat" title="open the last beat's conversation" ${
+              b.conversationId ? `data-conv="${esc(b.conversationId)}"` : 'disabled'
+            }>💬</button>
+          </div>
+          ${tempo}
+        </div>`;
+      })
+      .join('');
+  }
+
+  /** Run the ECG only while the cluster is actually on screen. */
   private syncEcg(): void {
-    const visible = this.heartbeatInfo && !this.$('heartbeat').classList.contains('hidden');
+    const visible = this.hbState && !this.$('heartbeat').classList.contains('hidden');
     if (visible && !this.ecgRaf) {
       const loop = () => {
         this.drawEcg();
+        this.refreshHbRows();
         this.ecgRaf = requestAnimationFrame(loop);
       };
       this.ecgRaf = requestAnimationFrame(loop);
@@ -356,22 +460,54 @@ export class Hud {
     }
   }
 
+  /** Once a second, refresh the dropdown rows' countdowns in place. */
+  private refreshHbRows(): void {
+    const sec = Math.floor(Date.now() / 1000);
+    if (!this.hbPanelOpen || this.tempoDragging || sec === this.hbRowTick) return;
+    this.hbRowTick = sec;
+    this.$('hb-panel')
+      .querySelectorAll<HTMLElement>('.hb-row')
+      .forEach((row) => {
+        const b = this.hbState?.beats.find((x) => x.executionId === row.dataset.id);
+        const el = row.querySelector<HTMLElement>('.hb-when');
+        if (b && el) el.textContent = this.hbWhen(b);
+      });
+  }
+
   private drawEcg(): void {
-    const h = this.heartbeatInfo;
+    const state = this.hbState;
+    const p = this.hbPrimary();
     const canvas = this.$('hb-ecg') as unknown as HTMLCanvasElement;
     const ctx = canvas.getContext('2d');
-    if (!h || !ctx) return;
+    if (!state || !ctx) return;
 
     const w = canvas.width;
     const ht = canvas.height;
     const now = Date.now();
-    const fired = Date.parse(h.firedAt) || now;
-    const intervalS = h.cron ? cronSeconds(h.cron) : null;
-    const running = h.status === 'running';
-
-    ctx.clearRect(0, 0, w, ht);
     const mid = ht * 0.62;
     const amp = ht * 0.5;
+    ctx.clearRect(0, 0, w, ht);
+
+    // Paused, disarmed or beatless — a flatline, never an absence: the life
+    // cluster stays on screen so the state is always visible.
+    const alive = p && (p.running || (p.enabled && !state.paused));
+    if (!alive) {
+      ctx.lineWidth = 1.2;
+      ctx.strokeStyle = 'rgba(255,92,138,0.35)';
+      ctx.shadowBlur = 0;
+      ctx.beginPath();
+      ctx.moveTo(0, mid);
+      ctx.lineTo(w, mid);
+      ctx.stroke();
+      this.$('hb-next').textContent = state.paused ? 'paused' : p ? 'off' : 'no heartbeat';
+      return;
+    }
+
+    const fired = p.firedAt ? Date.parse(p.firedAt) : now;
+    const next = p.nextRun ? Date.parse(p.nextRun) : NaN;
+    const intervalS = p.cron ? cronSeconds(p.cron) : null;
+    const running = p.running;
+
     ctx.lineWidth = 1.4;
     ctx.strokeStyle = running ? 'rgba(255,92,138,1)' : 'rgba(255,92,138,0.75)';
     ctx.shadowColor = 'rgba(255,92,138,0.55)';
@@ -383,21 +519,25 @@ export class Hud {
       // lands on the right edge exactly when the countdown hits zero.
       const windowMs = Math.min(intervalS, 3600) * 1000 * 1.04;
       const intervalMs = intervalS * 1000;
+      // Spikes are anchored on FLUJO's own next-fire prediction when known,
+      // else on the last fire (beats at anchor + k*interval).
+      const anchor = Number.isFinite(next) ? next : fired;
       // Slow hearts get a proportionally wider complex so the spike stays
       // visible on a window that spans the whole interval.
       const stretch = Math.min(1, 90 / intervalS);
       for (let x = 0; x <= w; x++) {
         const t = now - (w - x) * (windowMs / w);
-        // Seconds from the nearest beat (beats fire at fired + k*interval).
-        let dt = ((t - fired) % intervalMs) / 1000;
+        let dt = ((t - anchor) % intervalMs) / 1000;
         if (dt > intervalS / 2) dt -= intervalS;
         if (dt < -intervalS / 2) dt += intervalS;
         const y = mid - ecgAt(dt * stretch) * amp;
         if (x === 0) ctx.moveTo(x, y);
         else ctx.lineTo(x, y);
       }
-      const nextIn = intervalMs - (((now - fired) % intervalMs) + intervalMs) % intervalMs;
-      this.$('hb-next').textContent = running ? 'beating…' : `next in ${fmtCountdown(nextIn)}`;
+      const nextIn = Number.isFinite(next)
+        ? next - now
+        : intervalMs - (((now - fired) % intervalMs) + intervalMs) % intervalMs;
+      this.$('hb-next').textContent = running ? 'beating…' : nextIn <= 0 ? 'due…' : `next in ${fmtCountdown(nextIn)}`;
     } else {
       // No readable schedule — a calm idle ripple.
       for (let x = 0; x <= w; x++) {
@@ -405,7 +545,8 @@ export class Hud {
         if (x === 0) ctx.moveTo(x, y);
         else ctx.lineTo(x, y);
       }
-      this.$('hb-next').textContent = running ? 'beating…' : '';
+      const nextIn = Number.isFinite(next) ? next - now : null;
+      this.$('hb-next').textContent = running ? 'beating…' : nextIn != null && nextIn > 0 ? `next in ${fmtCountdown(nextIn)}` : '';
     }
     ctx.stroke();
     ctx.shadowBlur = 0;
@@ -424,10 +565,8 @@ export class Hud {
     this.reader.classList.toggle('hidden', !this.selectionOpen);
     // The legend yields its corner to the reader while something is selected.
     document.body.classList.toggle('reading', this.selectionOpen);
-    // The heartbeat bar owns the top-right corner in overview only —
-    // a focused behaviour's panel takes that spot.
-    this.$('heartbeat').classList.toggle('hidden', this.selectionOpen || !this.heartbeatInfo);
-    this.syncEcg();
+    // The heartbeat lives in the top bar next to pause/resume — always visible,
+    // whatever is selected. Its visibility is handled by setHeartbeat alone.
   }
 
   private clampPanelWidth(w: number): number {
@@ -529,28 +668,27 @@ export class Hud {
       (a.runs && a.runs > 1 ? ` <em>· ${a.runs} runs</em>` : '');
   }
 
-  /** Show / update the heartbeat status bar (top-right, overview only). */
-  setHeartbeat(h: HeartbeatInfo | null): void {
-    this.heartbeatInfo = h;
-    if (h) {
-      this.$('hb-title').textContent = h.name;
-      this.$('hb-time').textContent = h.status === 'running' ? 'beating…' : relTime(h.firedAt);
-      this.$('heartbeat').classList.toggle('running', h.status === 'running');
-      (this.$('hb-open') as unknown as HTMLButtonElement).disabled = !h.conversationId;
-
-      // Tempo slider — only for schedule-driven beats we can re-arm.
-      const canTempo = Boolean(h.executionId && h.cron);
-      this.$('hb-tempo').classList.toggle('hidden', !canTempo);
-      if (canTempo && !this.tempoDragging) {
-        const i = tempoIndexOf(h.cron);
-        this.$<HTMLInputElement>('hb-tempo-slider').value = String(i);
-        // A cron off the slider's stops (e.g. "every morning") shows as-is —
-        // the thumb just marks the nearest stop.
-        const exact = cronSeconds(h.cron!) === TEMPO_STOPS[i].s;
-        this.$('hb-tempo-label').textContent = exact ? TEMPO_STOPS[i].label : h.cron!;
-      }
-    }
-    this.syncPanels();
+  /** Update the life cluster (top bar, always visible) + the beats dropdown. */
+  setHeartbeat(state: HeartbeatState | null): void {
+    this.hbState = state;
+    const cluster = this.$('heartbeat');
+    const p = this.hbPrimary();
+    // The cluster shows whenever we know ANY vitals — beats or a paused
+    // scheduler. Only a brain with no data at all hides it.
+    const show = Boolean(state && (state.beats.length || state.paused));
+    cluster.classList.toggle('hidden', !show);
+    cluster.classList.toggle('running', Boolean(p?.running));
+    cluster.classList.toggle('paused', Boolean(state?.paused));
+    // The count chip: how many beats live behind the dropdown.
+    const n = state?.beats.length ?? 0;
+    const count = this.$('hb-count');
+    count.classList.toggle('hidden', n < 2);
+    count.textContent = n >= 2 ? String(n) : '';
+    // ⚡ needs a target beat.
+    this.$('hb-beat-now').classList.toggle('hidden', !p);
+    if (!show && this.hbPanelOpen) this.setHbPanelOpen(false);
+    else if (this.hbPanelOpen && !this.tempoDragging) this.renderHbPanel();
+    this.syncEcg();
   }
 
   setGroupMode(mode: GroupMode): void {

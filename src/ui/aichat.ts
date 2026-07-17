@@ -1,29 +1,30 @@
 import type { BrainGraph, Neuron, NodeChatMessage } from '../types';
 import type { BrainActivityEvent } from '../data/execution';
-import { splitToolName, isStem } from '../data/distill';
+import type { HeartbeatState } from '../data/heartbeat';
+import { splitToolName, isStem, rankWiring, type Wiring } from '../data/distill';
 import { flujoBase } from '../data/loader';
 import { PauseController } from '../data/pause';
+import { PresenceOrb } from './presenceOrb';
 
 /**
- * The pause button + the always-on chat dock.
+ * The pause button + the always-on presence dock.
  *
- * The dock appears as soon as FLUJO is reachable and talks to the brain-stem
- * flow (the root behaviour carrying the life goal) by default; selecting a
- * behaviour in the scene retargets the chat to that behaviour instead, each
- * target keeping its own last conversation. When talking to the stem, every
- * OTHER behaviour is offered as a client-side tool (all on by default), so
- * the model can delegate — brain executes each tool call as its own flow run
- * and feeds the result back, and every run animates in the viewer. Messages
- * typed while a turn is in flight queue up.
+ * The dock is the brain-stem's face: a living neural orb that breathes, pulses
+ * on every heartbeat and reply, and blooms into a conversation when you reach
+ * for it. It talks to the brain-stem (the root behaviour carrying the life
+ * goal) by default; selecting a behaviour in the scene retargets the chat to
+ * that behaviour, each target keeping its own last conversation. When talking
+ * to the stem, every other behaviour is a client-side tool it may delegate to.
  *
- * The 🕘 button hands off to the graphical history view (the constellation
- * sky, filtered to the chat's current target); conversations picked there
- * are loaded back into the dock and can be continued.
+ * The redesign shifts weight away from chat: the stem shows its LIVE WIRING —
+ * the abilities (MCP servers) used by the most behaviours and the behaviours
+ * that fan out to the most subflows — so it's visibly "always connected to
+ * what matters" (derived from the graph, never rewriting FLUJO). A mode rail
+ * opens the vision surfaces: voice, an in-app canvas, and MCP apps.
  *
- * The dock also watches the brain's vitals (/api/planned-executions): an
- * adopted instance with no brain-stem is offered one (grown via the
- * brain-manager into the running instance), a brain-stem without a heartbeat
- * is offered a heartbeat, and a mind without a heartbeat starts paused.
+ * The 🕘 button hands off to the graphical history view; the dock also watches
+ * vitals (/api/planned-executions) to offer a brain-stem / heartbeat when one
+ * is missing, and starts a heartbeat-less mind paused.
  */
 
 interface ToolCall {
@@ -54,49 +55,8 @@ interface PlannedExecutions {
 const MAX_TOOL_ROUNDS = 8;
 const CHAT_CONV_KEY = 'brain-chat-conversation';
 
-/**
- * Intent pills: the user picks what a message is for, and the turn is scoped
- * to the matching slice of the brain-stem's tool belt (list/perform/learn/
- * forget behaviours; list/use/learn/forget skills — hosted by the manager).
- *
- * The belt lives server-side (MCP nodes baked into the flow) and FLUJO has no
- * per-request tool filter for flow runs — client `tools` are ignored on the
- * flow path entirely. So scoping is done by instruction: a preamble names the
- * allowed verbs (and the concrete behaviours/skills in scope), which also
- * keeps the model from wandering through the whole belt.
- */
-type Intent = 'use-behaviour' | 'learn-behaviour' | 'use-skill' | 'learn-skill';
-
-interface IntentCtx {
-  behaviours: string[];
-  skills: string[];
-}
-
-const INTENTS: Record<Intent, (ctx: IntentCtx) => string> = {
-  'use-behaviour': ({ behaviours }) =>
-    'INTENT: perform an existing behaviour for the task below. Allowed tools: perform_behaviour (and ' +
-    'list_behaviours to inspect). Do not learn, forget, or touch skills this turn.' +
-    (behaviours.length ? ` Behaviours in scope: ${behaviours.join(', ')}.` : ''),
-  'learn-behaviour': () =>
-    'INTENT: learn a NEW behaviour for the task below. Allowed tools: list_behaviours and learn_behaviour. ' +
-    'Do not perform existing behaviours and do not touch skills this turn.',
-  'use-skill': ({ skills }) =>
-    'INTENT: use an installed skill (MCP server) for the task below. Allowed tools: list_skills (pass name to ' +
-    'see a skill\'s tools) and use_skill to call one. If use_skill is not in your belt, say so and name the ' +
-    'behaviour that binds the skill instead. Do not learn or forget anything this turn.' +
-    (skills.length ? ` Skills installed: ${skills.join(', ')}.` : ''),
-  'learn-skill': () =>
-    'INTENT: learn a NEW skill for the task below. Allowed tools: list_skills (its search reaches the MCP ' +
-    'registry) and learn_skill to install it. Do not create behaviours this turn.',
-};
-
-/** Intents that still attach the behaviours as client-side tools. */
-const INTENT_BEHAVIOUR_TOOLS: Record<Intent, boolean> = {
-  'use-behaviour': true,
-  'learn-behaviour': false,
-  'use-skill': false,
-  'learn-skill': false,
-};
+/** Vision surfaces reachable from the mode rail. */
+type Stage = 'voice' | 'canvas' | 'apps';
 
 /** Wake prompt for the heartbeat (mirrors manager/src/brainstem.ts). */
 const WAKE_PROMPT =
@@ -140,7 +100,7 @@ function flattenContent(content: unknown): string | null {
   return null;
 }
 
-/** Hide the intent preamble in displayed user bubbles (it stays on the wire). */
+/** Older conversations may carry a legacy intent preamble — hide it on display. */
 function stripIntentPreamble(s: string): string {
   if (!s.startsWith('INTENT:')) return s;
   const i = s.indexOf('\n\nTASK:\n');
@@ -161,6 +121,8 @@ export class AiDock {
   private pauseBtn = this.$<HTMLButtonElement>('pause-btn');
   private setup = this.$('ai-setup');
   private title = this.$('ai-title');
+  private sub = this.$('ai-sub');
+  private presence = this.dock.querySelector('.ai-presence') as HTMLElement;
 
   private pause = new PauseController();
   private graph: BrainGraph | null = null;
@@ -168,25 +130,37 @@ export class AiDock {
   private stem: Neuron | null = null;
   /** A behaviour the user selected in the scene — overrides the stem. */
   private selectedId: string | null = null;
-  /** Behaviours the user switched OFF as tools (persist across graph polls). */
-  private disabledTools = new Set<string>();
 
   private conversationId: string | null = null;
   private messages: ChatMessage[] = [];
-  private queue: Array<{ text: string; el: HTMLElement; intent: Intent | null }> = [];
+  private queue: Array<{ text: string; el: HTMLElement }> = [];
   private busy = false;
-  /** The armed intent pill; applies to the next message sent. */
-  private intent: Intent | null = null;
   /** Target id whose conversation currently fills the dock. */
   private targetFor: string | null = null;
   /** Bumped on every target switch — stale async loads check it and bail. */
   private epoch = 0;
+
+  /** The stem's living face; re-seeded when the stem changes. */
+  private orb: PresenceOrb;
+  private orbSeed = 'brain-stem';
+  /** Fingerprint of the last heartbeat fire, so a new beat pulses the orb once. */
+  private lastBeatSig = '';
+
+  // ---- vision surfaces (scaffold) ----
+  private stage = this.$('ai-stage');
+  private activeStage: Stage | null = null;
+  private voiceOrb: PresenceOrb | null = null;
+  private voiceListening = false;
+  private waveRaf = 0;
+  private canvasSeeded = false;
 
   /** Fires whenever the current conversation's content changes — feeds the
    *  per-neuron overlay (message badges on the focused flow graph). */
   onConversation: (msgs: NodeChatMessage[]) => void = () => {};
   /** 🕘: hand off to the graphical history view, filtered to this flow. */
   onShowHistory: (flowId: string | null) => void = () => {};
+  /** A wiring chip / app tile asks the scene to focus a neuron. */
+  onFocus: (neuronId: string) => void = () => {};
 
   /** Dock revealed once FLUJO first answered. */
   private started = false;
@@ -199,6 +173,8 @@ export class AiDock {
   private managerOk: boolean | null = null;
 
   constructor() {
+    this.orb = new PresenceOrb(this.$<HTMLCanvasElement>('stem-orb'), this.orbSeed);
+
     this.pauseBtn.addEventListener('click', () => void this.togglePause());
     this.sendBtn.addEventListener('click', () => this.submit());
     this.input.addEventListener('keydown', (e) => {
@@ -217,28 +193,22 @@ export class AiDock {
     inputrow.addEventListener('pointerenter', () => this.revealChat());
     this.input.addEventListener('focus', () => this.revealChat());
     this.dock.addEventListener('pointerleave', () => {
-      if (document.activeElement !== this.input) this.collapseChat();
+      if (document.activeElement !== this.input && !this.activeStage) this.collapseChat();
     });
     document.addEventListener('pointerdown', (e) => {
       if (!this.dock.contains(e.target as Node)) {
         this.collapseChat();
+        this.closeStage();
         this.input.blur();
       }
     });
 
-    // Intent pills: click arms one and disables the rest; click again disarms.
-    this.$('ai-intents')
-      .querySelectorAll<HTMLButtonElement>('.ai-intent')
-      .forEach((btn) => {
-        btn.addEventListener('click', () => {
-          this.setIntent(this.intent === btn.dataset.intent ? null : (btn.dataset.intent as Intent));
-          this.input.focus();
-        });
-      });
-
-    // Bulk toggles for the delegation tool belt.
-    this.$('ai-tools-all').addEventListener('click', () => this.setAllTools(true));
-    this.$('ai-tools-none').addEventListener('click', () => this.setAllTools(false));
+    // The mode rail opens the vision surfaces.
+    this.$('mode-voice').addEventListener('click', () => this.toggleStage('voice'));
+    this.$('mode-canvas').addEventListener('click', () => this.toggleStage('canvas'));
+    this.$('mode-apps').addEventListener('click', () => this.toggleStage('apps'));
+    this.$('stage-close').addEventListener('click', () => this.closeStage());
+    this.$('voice-toggle').addEventListener('click', () => this.toggleVoice());
 
     this.$('ai-history').addEventListener('click', () => {
       this.collapseChat(); // the history sky lives behind the chat
@@ -253,11 +223,13 @@ export class AiDock {
     this.dock.classList.remove('unread');
     if (focus) this.input.focus();
     this.log.scrollTop = this.log.scrollHeight;
+    this.updateOrb();
   }
 
   /** Collapse to just the command pill — the conversation stays alive. */
   private collapseChat(): void {
     this.dock.classList.remove('open');
+    this.updateOrb();
   }
 
   /** Who the dock talks to: the selected behaviour, else the brain-stem. */
@@ -279,20 +251,30 @@ export class AiDock {
   }
 
   /**
-   * Point the dock at the current target: title, intents (stem-only), and —
-   * when the target actually changed — swap to that target's conversation.
+   * Point the dock at the current target: identity (name + description), the
+   * wiring cluster (stem-only), and — when the target changed — swap to that
+   * target's conversation.
    */
   private syncTarget(restore = true): void {
     const t = this.target();
     const stemTalk = !!t && t.id === this.stem?.id;
-    this.title.textContent = t ? `talk to ${t.name}` : 'talk to the brain';
+    this.title.textContent = t ? t.name : 'no brain-stem';
+    this.sub.textContent = t ? (stemTalk ? t.prompt?.trim() || t.description || "the mind's core" : t.description || 'a behaviour') : 'grow one above to begin';
     this.input.disabled = !t;
     this.sendBtn.disabled = !t;
-    this.input.placeholder = t ? `say something to ${t.name}… (queues while it thinks)` : 'no brain-stem yet — grow one above';
-    // Intent pills + the delegation tool belt only exist for the brain-stem.
-    if (!stemTalk && this.intent) this.setIntent(null);
-    this.$('ai-intents').classList.toggle('hidden', !!t && !stemTalk);
-    this.dock.querySelector('.ai-toolbox')?.classList.toggle('hidden', !!t && !stemTalk);
+    this.input.placeholder = t ? `say something to ${t.name}…` : 'no brain-stem yet — grow one above';
+
+    // The wiring cluster only makes sense for the brain-stem.
+    this.$('ai-wiring').classList.toggle('hidden', !stemTalk);
+    if (stemTalk) this.renderWiring();
+
+    // The orb re-seeds to whatever mind we're now facing.
+    const seed = t?.id ?? 'brain-stem';
+    if (seed !== this.orbSeed) {
+      this.orbSeed = seed;
+      this.orb.reseed(seed);
+    }
+    this.updateOrb();
 
     const id = t?.id ?? null;
     if (id === this.targetFor) return;
@@ -303,17 +285,6 @@ export class AiDock {
     this.log.innerHTML = '';
     this.emitConversation();
     if (t && restore) void this.restoreConversation();
-  }
-
-  private setIntent(intent: Intent | null): void {
-    this.intent = intent;
-    this.$('ai-intents')
-      .querySelectorAll<HTMLButtonElement>('.ai-intent')
-      .forEach((btn) => {
-        const mine = btn.dataset.intent === intent;
-        btn.classList.toggle('active', mine);
-        btn.disabled = intent !== null && !mine;
-      });
   }
 
   /** Called whenever the brain graph (re)builds. */
@@ -327,7 +298,7 @@ export class AiDock {
     // Conversations live in FLUJO (on disk) — syncTarget picks the one this
     // browser last used with the target back up (e.g. after a reload).
     this.syncTarget();
-    this.renderTools();
+    if (this.activeStage === 'apps') this.renderApps();
     if (!this.started) {
       this.started = true;
       this.dock.classList.remove('hidden'); // the command pill is now live
@@ -338,26 +309,246 @@ export class AiDock {
     void this.checkVitals();
   }
 
-  /** Select-all / clear-all for the delegation behaviours. */
-  private setAllTools(on: boolean): void {
-    const neurons = (this.graph?.neurons ?? []).filter((n) => n.kind !== 'ability' && n.id !== this.stem?.id);
-    if (on) this.disabledTools.clear();
-    else for (const n of neurons) this.disabledTools.add(n.id);
-    this.renderTools();
+  // ---- the stem's live wiring ----------------------------------------------
+
+  /** Render the "always connected to" cluster: top abilities + top behaviours,
+   *  derived from the graph. These double as the delegation targets. */
+  private renderWiring(): void {
+    const box = this.$('ai-wire-chips');
+    if (!this.graph) {
+      box.innerHTML = '';
+      return;
+    }
+    const wiring: Wiring = rankWiring(this.graph, { topAbilities: 5, topBehaviours: 5, excludeId: this.stem?.id ?? null });
+    if (!wiring.abilities.length && !wiring.behaviours.length) {
+      box.innerHTML = '<span class="wire-empty">this stem has no wiring yet — give it behaviours and abilities</span>';
+      return;
+    }
+    const abil = wiring.abilities
+      .map(
+        (a) =>
+          `<button class="wire-chip ability ${esc(a.status)}" data-server="${esc(a.server)}" title="${esc(a.server)} — used by ${a.count} behaviour${a.count === 1 ? '' : 's'}">` +
+          `<i>⬡</i>${esc(a.server)}<b>${a.count}</b></button>`,
+      )
+      .join('');
+    const beh = wiring.behaviours
+      .map(
+        (b) =>
+          `<button class="wire-chip behaviour" data-id="${esc(b.id)}" title="${esc(b.name)} — fans out to ${b.count} subflow${b.count === 1 ? '' : 's'}">` +
+          `<i>◇</i>${esc(b.name)}<b>${b.count}</b></button>`,
+      )
+      .join('');
+    box.innerHTML = abil + beh;
+    box.querySelectorAll<HTMLElement>('.wire-chip.behaviour').forEach((el) =>
+      el.addEventListener('click', () => {
+        const id = el.dataset.id!;
+        this.onFocus(id);
+        this.setSelected(id);
+      }),
+    );
+    box.querySelectorAll<HTMLElement>('.wire-chip.ability').forEach((el) =>
+      el.addEventListener('click', () => this.openStage('apps')),
+    );
+  }
+
+  // ---- the orb -------------------------------------------------------------
+
+  /** Keep the orb's mood in step with the dock's state. */
+  private updateOrb(): void {
+    const state = this.pause.paused ? 'paused' : this.busy ? 'thinking' : this.dock.classList.contains('open') ? 'active' : 'idle';
+    this.orb.setState(state);
+    this.voiceOrb?.setState(this.voiceListening ? 'thinking' : state === 'paused' ? 'paused' : 'active');
+  }
+
+  /** Heartbeat state (from main): a fresh beat makes the whole dock pulse. */
+  setHeartbeat(state: HeartbeatState): void {
+    const running = state.beats.find((b) => b.running);
+    const latest = state.beats.reduce<string | null>((a, b) => (b.firedAt && (!a || b.firedAt > a) ? b.firedAt : a), null);
+    const sig = `${running?.executionId ?? ''}:${latest ?? ''}`;
+    if (sig && sig !== this.lastBeatSig) {
+      this.lastBeatSig = sig;
+      this.orb.pulse();
+      this.voiceOrb?.pulse();
+      // A brief flash on the collapsed presence dot.
+      this.presence.classList.remove('beat');
+      void this.presence.offsetWidth; // restart the animation
+      this.presence.classList.add('beat');
+    }
+    if (typeof state.paused === 'boolean' && state.paused !== this.pause.paused) {
+      this.pause.paused = state.paused;
+      this.setPauseUi();
+      this.updateOrb();
+    }
+  }
+
+  // ---- vision surfaces (scaffold) ------------------------------------------
+
+  private toggleStage(s: Stage): void {
+    if (this.activeStage === s) this.closeStage();
+    else this.openStage(s);
+  }
+
+  private openStage(s: Stage): void {
+    this.activeStage = s;
+    this.stage.dataset.stage = s;
+    this.stage.classList.remove('hidden');
+    this.dock.classList.add('staged');
+    for (const id of ['mode-voice', 'mode-canvas', 'mode-apps']) {
+      this.$(id).classList.toggle('active', id === `mode-${s}`);
+    }
+    if (s === 'voice') this.openVoice();
+    else if (s === 'canvas') this.seedCanvas();
+    else if (s === 'apps') this.renderApps();
+  }
+
+  private closeStage(): void {
+    if (!this.activeStage) return;
+    if (this.activeStage === 'voice') this.stopVoice();
+    this.activeStage = null;
+    this.stage.classList.add('hidden');
+    this.dock.classList.remove('staged');
+    for (const id of ['mode-voice', 'mode-canvas', 'mode-apps']) this.$(id).classList.remove('active');
+  }
+
+  // voice ---------------------------------------------------------------------
+
+  private openVoice(): void {
+    if (!this.voiceOrb) {
+      this.voiceOrb = new PresenceOrb(this.$<HTMLCanvasElement>('voice-orb'), `${this.orbSeed}:voice`);
+    }
+    this.voiceOrb.setState('active');
+    this.drawWave();
+  }
+
+  private toggleVoice(): void {
+    this.voiceListening = !this.voiceListening;
+    const btn = this.$<HTMLButtonElement>('voice-toggle');
+    const t = this.$('voice-transcript');
+    btn.classList.toggle('listening', this.voiceListening);
+    btn.textContent = this.voiceListening ? 'listening…' : 'tap to speak';
+    t.textContent = this.voiceListening
+      ? 'listening… (voice capture is coming — this previews the experience)'
+      : 'tap the orb and just talk to your brain';
+    this.voiceOrb?.setState(this.voiceListening ? 'thinking' : 'active');
+    if (this.voiceListening) this.voiceOrb?.pulse();
+  }
+
+  /** A gently rippling waveform; louder while "listening". Scaffold only. */
+  private drawWave(): void {
+    cancelAnimationFrame(this.waveRaf);
+    const cv = this.$<HTMLCanvasElement>('voice-wave');
+    const ctx = cv.getContext('2d');
+    if (!ctx) return;
+    const tick = () => {
+      if (this.activeStage !== 'voice') return;
+      const dpr = Math.min(2, window.devicePixelRatio || 1);
+      const w = cv.clientWidth || 640;
+      const h = cv.clientHeight || 120;
+      if (cv.width !== Math.round(w * dpr)) {
+        cv.width = Math.round(w * dpr);
+        cv.height = Math.round(h * dpr);
+      }
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, w, h);
+      const t = performance.now() / 1000;
+      const amp = (this.voiceListening ? 0.34 : 0.08) * h;
+      ctx.lineWidth = 2;
+      ctx.strokeStyle = this.voiceListening ? 'rgba(88,196,255,0.9)' : 'rgba(140,165,255,0.45)';
+      ctx.shadowColor = 'rgba(88,196,255,0.6)';
+      ctx.shadowBlur = this.voiceListening ? 12 : 4;
+      ctx.beginPath();
+      for (let x = 0; x <= w; x += 4) {
+        const p = x / w;
+        const env = Math.sin(p * Math.PI); // taper at the edges
+        const y =
+          h / 2 +
+          Math.sin(p * 22 + t * 6) * amp * env * (0.6 + 0.4 * Math.sin(t * 3 + p * 8)) +
+          Math.sin(p * 9 - t * 4) * amp * 0.3 * env;
+        if (x === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+      this.waveRaf = requestAnimationFrame(tick);
+    };
+    this.waveRaf = requestAnimationFrame(tick);
+  }
+
+  private stopVoice(): void {
+    cancelAnimationFrame(this.waveRaf);
+    this.voiceListening = false;
+    const btn = this.$<HTMLButtonElement>('voice-toggle');
+    btn.classList.remove('listening');
+    btn.textContent = 'tap to speak';
+  }
+
+  // canvas --------------------------------------------------------------------
+
+  private seedCanvas(): void {
+    if (this.canvasSeeded) return;
+    this.canvasSeeded = true;
+    // A sample artifact so the surface reads as alive — the real thing will host
+    // artifacts the brain produces and MCP Apps that render their own UI here.
+    const bars = [42, 58, 35, 71, 49, 63, 80, 55];
+    const max = Math.max(...bars);
+    const w = 460;
+    const h = 150;
+    const bw = w / bars.length;
+    const rects = bars
+      .map((v, i) => {
+        const bh = (v / max) * (h - 30);
+        const x = i * bw + 8;
+        return `<rect x="${x}" y="${h - bh - 6}" width="${bw - 16}" height="${bh}" rx="5" fill="url(#g)"><title>${v}</title></rect>`;
+      })
+      .join('');
+    this.$('canvas-surface').innerHTML =
+      '<div class="artifact">' +
+      '<div class="artifact-head"><span class="artifact-kind">artifact · chart</span><span class="artifact-name">weekly activity</span></div>' +
+      `<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="xMidYMid meet" class="artifact-svg">` +
+      '<defs><linearGradient id="g" x1="0" y1="0" x2="0" y2="1">' +
+      '<stop offset="0" stop-color="#9b7dff"/><stop offset="1" stop-color="#58c4ff"/></linearGradient></defs>' +
+      rects +
+      '</svg>' +
+      '<p class="artifact-note">rendered on the canvas — the brain and its MCP&nbsp;Apps will draw here in real time.</p>' +
+      '</div>';
+  }
+
+  // apps ----------------------------------------------------------------------
+
+  private renderApps(): void {
+    const grid = this.$('apps-grid');
+    const wiring = this.graph ? rankWiring(this.graph, { topAbilities: 8 }) : { abilities: [], behaviours: [] };
+    if (!wiring.abilities.length) {
+      grid.innerHTML = '<p class="apps-empty">no abilities wired yet — the brain learns skills to gain apps.</p>';
+      return;
+    }
+    grid.innerHTML = wiring.abilities
+      .map(
+        (a) =>
+          `<div class="app-tile ${esc(a.status)}" title="${esc(a.server)}">` +
+          '<span class="app-icon">⬡</span>' +
+          `<span class="app-name">${esc(a.server)}</span>` +
+          `<span class="app-meta">${a.count} behaviour${a.count === 1 ? '' : 's'} · ${esc(a.status)}</span>` +
+          '<span class="app-open">open ▸</span>' +
+          '</div>',
+      )
+      .join('');
+    grid.querySelectorAll<HTMLElement>('.app-tile').forEach((el) =>
+      el.addEventListener('click', () => {
+        el.classList.add('poked');
+        window.setTimeout(() => el.classList.remove('poked'), 600);
+      }),
+    );
   }
 
   /**
    * Live SSE activity (via the ExecutionWatcher): surface server-side tool
    * calls of the open conversation as they happen. The completion endpoint is
    * non-streaming, so without this the dock shows nothing between the user's
-   * message and the final answer — even though the flow (agent-SDK models
-   * especially) is busily calling tools the whole time.
+   * message and the final answer.
    */
   handleExecution(e: BrainActivityEvent): void {
     if (e.kind !== 'tool-call' || !e.toolName) return;
-    // A fresh chat's conversation id only arrives with the completion
-    // response, so while the first turn is in flight adopt tool calls from
-    // any run of the target itself.
     const mine =
       e.conversationId === this.conversationId ||
       (!this.conversationId && this.busy && !!e.flowId && e.flowId === this.target()?.id);
@@ -502,6 +693,7 @@ export class AiDock {
         this.note('resumed — the mind runs on its own again.');
       }
       this.setPauseUi();
+      this.updateOrb();
     } catch (e) {
       this.note(`⚠ ${e instanceof Error ? e.message : 'failed'}`, 'err');
       this.setPauseUi();
@@ -528,6 +720,7 @@ export class AiDock {
       if (typeof data.paused === 'boolean' && data.paused !== this.pause.paused) {
         this.pause.paused = data.paused;
         this.setPauseUi();
+        this.updateOrb();
       }
 
       // A mind without a heartbeat starts paused: nothing scheduled fires
@@ -542,6 +735,7 @@ export class AiDock {
           }).catch(() => undefined);
           this.pause.paused = true;
           this.setPauseUi();
+          this.updateOrb();
           this.note('started paused — this brain has no heartbeat yet. Press resume when it should run on its own.');
         }
       }
@@ -733,37 +927,10 @@ export class AiDock {
 
   // ---- tools ----------------------------------------------------------------
 
-  /** Every behaviour except the brain-stem, minus what the user switched off.
+  /** Every behaviour except the brain-stem — the stem's delegation targets.
    *  Ability neurons (MCP servers) are viz-only — they cannot run as flows. */
   private enabledTools(): Neuron[] {
-    return (this.graph?.neurons ?? []).filter(
-      (n) => n.kind !== 'ability' && n.id !== this.stem?.id && !this.disabledTools.has(n.id),
-    );
-  }
-
-  private renderTools(): void {
-    const box = this.$('ai-tools');
-    const neurons = (this.graph?.neurons ?? []).filter((n) => n.kind !== 'ability' && n.id !== this.stem?.id);
-    box.innerHTML = neurons
-      .map(
-        (n) =>
-          `<button class="ai-tool${this.disabledTools.has(n.id) ? ' off' : ''}" data-id="${esc(n.id)}" title="${esc(n.description || n.name)}">${esc(n.name)}</button>`,
-      )
-      .join('');
-    box.querySelectorAll<HTMLElement>('.ai-tool').forEach((el) => {
-      el.addEventListener('click', () => {
-        const id = el.dataset.id!;
-        if (this.disabledTools.has(id)) this.disabledTools.delete(id);
-        else this.disabledTools.add(id);
-        el.classList.toggle('off');
-        this.updateToolCount();
-      });
-    });
-    this.updateToolCount();
-  }
-
-  private updateToolCount(): void {
-    this.$('ai-tool-count').textContent = String(this.enabledTools().length);
+    return (this.graph?.neurons ?? []).filter((n) => n.kind !== 'ability' && n.id !== this.stem?.id);
   }
 
   // ---- transcript -----------------------------------------------------------
@@ -802,8 +969,6 @@ export class AiDock {
     pill.className = live ? 'tpill live' : 'tpill';
     pill.innerHTML = `<i>⚙</i>${server ? `<em>${esc(server)}</em>` : ''}${esc(tool)}`;
     this.pillRow().appendChild(pill);
-    // The stream carries no per-call "done" we could key on — settle the
-    // pulse after a beat so finished calls don't throb forever.
     if (live) window.setTimeout(() => pill.classList.remove('live'), 5000);
     this.log.scrollTop = this.log.scrollHeight;
     return pill;
@@ -825,32 +990,31 @@ export class AiDock {
     const text = this.input.value.trim();
     if (!text || !this.target()) return;
     this.input.value = '';
-    const intent = this.intent;
-    this.setIntent(null); // one-shot: a pill arms exactly one message
-    const tag = intent ? `<span class="itag">${intent.replace('-', ' ')}</span>` : '';
-    const el = this.bubble(this.busy ? 'user queued' : 'user', tag + esc(text));
+    const el = this.bubble(this.busy ? 'user queued' : 'user', esc(text));
     if (this.busy) {
-      this.queue.push({ text, el, intent });
+      this.queue.push({ text, el });
       return;
     }
-    void this.run(text, intent);
+    void this.run(text);
   }
 
-  private async run(text: string, intent: Intent | null): Promise<void> {
+  private async run(text: string): Promise<void> {
     this.busy = true;
     this.sendBtn.classList.add('busy');
+    this.updateOrb();
     try {
-      await this.turn(text, intent);
+      await this.turn(text);
     } catch (e) {
       this.note(`⚠ ${e instanceof Error ? e.message : 'request failed'}`, 'err');
     } finally {
       this.emitConversation();
       this.busy = false;
       this.sendBtn.classList.remove('busy');
+      this.updateOrb();
       const next = this.queue.shift();
       if (next) {
         next.el.classList.remove('queued');
-        void this.run(next.text, next.intent);
+        void this.run(next.text);
       }
     }
   }
@@ -866,7 +1030,7 @@ export class AiDock {
   }
 
   /** One user turn: completion + as many tool rounds as the model asks for. */
-  private async turn(text: string, intent: Intent | null = null): Promise<void> {
+  private async turn(text: string): Promise<void> {
     const base = flujoBase();
     const target = this.target();
     if (!base || !target) throw new Error('FLUJO is not reachable');
@@ -876,32 +1040,19 @@ export class AiDock {
     const msgs = this.messages;
     const current = () => this.messages === msgs;
 
-    // An armed intent travels inside the user message (FLUJO strips client
-    // system messages in flow mode, and has no per-request tool scoping —
-    // the belt is narrowed by instruction).
-    const ctx: IntentCtx = {
-      behaviours: this.enabledTools().map((n) => n.name),
-      skills: Object.entries(this.graph?.servers ?? {})
-        .filter(([, s]) => s !== 'disabled')
-        .map(([name]) => name),
-    };
-    const content = intent ? `${INTENTS[intent](ctx)}\n\nTASK:\n${text}` : text;
-
     // FLUJO parks a finished conversation on its Finish node; a follow-up
     // user message must point execution back at a thinking node or the
     // resumed run completes instantly with a bare "Processing complete."
-    // (Mirrors FLUJO's own chat UI, which tags every follow-up this way.)
     msgs.push({
       role: 'user',
-      content,
+      content: text,
       ...(this.conversationId ? { processNodeId: this.resumeNodeId() } : {}),
     });
 
-    // Reduced context: behaviours are only offered as client-side tools when
-    // talking to the brain-stem AND the intent calls for performing them (or
-    // no intent is armed). (FLUJO's flow path currently ignores client tools
-    // — kept as a harmless fallback; the intent preamble does the scoping.)
-    const tools = stemTalk && (!intent || INTENT_BEHAVIOUR_TOOLS[intent]) ? this.enabledTools() : [];
+    // Talking to the stem offers every other behaviour as a delegation tool.
+    // (FLUJO's flow path currently ignores client tools — kept as a harmless
+    // fallback; the stem's own MCP belt does the real work.)
+    const tools = stemTalk ? this.enabledTools() : [];
     const nameToFlow = new Map<string, Neuron>();
     const toolDefs = tools.map((n) => {
       let name = toolName(n.name);
@@ -937,8 +1088,6 @@ export class AiDock {
         conversationId = res.conversation_id ?? conversationId;
         if (current()) {
           this.conversationId = conversationId;
-          // Remember where this browser talks, so a reload lands back here
-          // (the conversation itself is persisted by FLUJO).
           const key = this.convKey();
           if (key && conversationId) localStorage.setItem(key, conversationId);
         }
@@ -967,6 +1116,7 @@ export class AiDock {
         }
 
         if (msg.content?.trim() && current()) {
+          this.orb.pulse(); // a fresh thought lights up the face
           const at = this.nodeLabel(msg.processNodeId);
           this.bubble('ai', (at ? `<span class="ntag">at ${esc(at)}</span>` : '') + esc(msg.content.trim()));
         }

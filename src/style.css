@@ -1,13 +1,23 @@
 :root {
-  --bg: #05070f;
-  --fg: #dbe4ff;
+  /* Immersive base — the "brain online" birth/lobby palette. */
+  --bg: #04070e;
+  --fg: #e6ecff;
   --muted: #8a97bf;
-  --panel: rgba(12, 16, 30, 0.72);
-  --border: rgba(140, 160, 220, 0.18);
-  /* Synapse hues follow FLUJO's editor palette. */
+  --panel: rgba(12, 18, 34, 0.62);
+  --panel-2: rgba(10, 15, 30, 0.92);
+  --border: rgba(140, 165, 255, 0.16);
+  --border-lit: rgba(150, 180, 255, 0.5);
+  /* The mind's accent triad: violet · cyan · heartbeat pink. */
+  --brand: #7c5cff;
+  --brand-2: #9b7dff;
+  --cyan: #58c4ff;
+  --pink: #ff5c8a;
+  --glow: rgba(130, 160, 255, 0.35);
+  /* Graph synapse hues follow FLUJO's editor palette (unchanged). */
   --subflow: #f59e0b;
   --server: #4d8df6;
   --model: #a78bfa;
+  color-scheme: dark;
 }
 
 * { box-sizing: border-box; }
@@ -36,10 +46,13 @@ header, aside, section, footer { position: fixed; z-index: 10; }
   pointer-events: none;
 }
 #hud-top .title { display: flex; align-items: center; gap: 12px; pointer-events: auto; }
-#hud-top .glyph { font-size: 30px; filter: drop-shadow(0 0 10px rgba(125,123,255,0.6)); }
-#hud-top h1 { margin: 0; font-size: 22px; letter-spacing: 0.12em; text-transform: lowercase; font-weight: 600; }
-#hud-top p { margin: 2px 0 0; font-size: 12px; color: var(--muted); }
-#source-badge { color: var(--server); text-decoration: none; }
+#hud-top .glyph { font-size: 30px; filter: drop-shadow(0 0 12px var(--glow)); }
+#hud-top h1 {
+  margin: 0; font-size: 22px; letter-spacing: 0.14em; text-transform: lowercase; font-weight: 300;
+  text-shadow: 0 0 22px var(--glow);
+}
+#hud-top p { margin: 2px 0 0; font-size: 12px; color: var(--muted); letter-spacing: 0.02em; }
+#source-badge { color: var(--cyan); text-decoration: none; }
 #source-badge.snapshot { color: var(--muted); }
 #source-badge[href] { pointer-events: auto; cursor: pointer; }
 #source-badge[href]:hover { text-decoration: underline; }
@@ -159,16 +172,16 @@ header, aside, section, footer { position: fixed; z-index: 10; }
   pointer-events: auto;
   display: inline-flex; align-items: center; gap: 7px;
   padding: 7px 14px; border-radius: 999px;
-  border: 1px solid rgba(245,158,11,0.5);
-  background: rgba(245,158,11,0.1);
+  border: 1px solid rgba(124,92,255,0.5);
+  background: rgba(124,92,255,0.1);
   color: var(--fg); text-decoration: none;
   font-size: 12.5px; font-weight: 600;
   transition: background 0.15s, box-shadow 0.15s, border-color 0.15s;
 }
 .edit-link:hover {
-  background: rgba(245,158,11,0.22);
-  border-color: rgba(245,158,11,0.85);
-  box-shadow: 0 0 18px rgba(245,158,11,0.28);
+  background: rgba(124,92,255,0.22);
+  border-color: rgba(124,92,255,0.85);
+  box-shadow: 0 0 18px rgba(124,92,255,0.28);
 }
 .edit-link .ic { font-size: 13px; line-height: 1; }
 #r-prompts .pblock { margin: 16px 0 0; }
@@ -342,14 +355,14 @@ body.reading #legend { display: none; }
 #pause-btn {
   pointer-events: auto;
   padding: 11px 22px; border-radius: 999px;
-  border: 1px solid rgba(245,158,11,0.55);
-  background: rgba(245,158,11,0.13);
+  border: 1px solid rgba(124,92,255,0.55);
+  background: rgba(124,92,255,0.14);
   color: var(--fg);
   font: inherit; font-size: 15px; font-weight: 650; cursor: pointer; backdrop-filter: blur(8px);
-  box-shadow: 0 0 18px rgba(245,158,11,0.15);
+  box-shadow: 0 0 18px rgba(124,92,255,0.16);
   transition: background 0.2s, box-shadow 0.2s;
 }
-#pause-btn:hover { background: rgba(245,158,11,0.28); box-shadow: 0 0 24px rgba(245,158,11,0.3); }
+#pause-btn:hover { background: rgba(124,92,255,0.3); box-shadow: 0 0 24px rgba(124,92,255,0.34); }
 #pause-btn:disabled { opacity: 0.5; cursor: wait; }
 #pause-btn.paused {
   border-color: rgba(74,222,128,0.6);
@@ -359,10 +372,9 @@ body.reading #legend { display: none; }
 }
 #pause-btn.paused:hover { background: rgba(74,222,128,0.24); }
 
-/* The chat: a centred command bar that blooms into a big glassy conversation.
-   The input pill is always on screen once FLUJO answers; hovering or focusing
-   it reveals the modal floating above, which auto-collapses on click-away
-   (the conversation keeps running underneath). */
+/* The dock: the brain-stem's living presence. A command bar carrying its face
+   (a breathing neural orb) blooms into a glassy conversation. The orb pulses
+   on every heartbeat and reply; a mode rail opens the vision surfaces. */
 #ai-dock {
   position: fixed; z-index: 30;
   left: 50%; bottom: 30px; transform: translateX(-50%);
@@ -379,11 +391,11 @@ body.reading #legend { display: none; }
   margin-bottom: 0;
   transform: translateY(12px);
   transform-origin: bottom center;
-  background: linear-gradient(180deg, rgba(15,19,36,0.9), rgba(9,12,24,0.93));
-  border: 1px solid rgba(245,158,11,0.28);
+  background: linear-gradient(180deg, rgba(15,19,36,0.92), rgba(9,12,24,0.94));
+  border: 1px solid var(--border);
   border-radius: 22px;
   backdrop-filter: blur(20px);
-  box-shadow: 0 34px 100px rgba(0,0,0,0.62), 0 0 46px rgba(245,158,11,0.08);
+  box-shadow: 0 34px 100px rgba(0,0,0,0.62), 0 0 60px rgba(90,120,255,0.10);
   transition: height 0.28s cubic-bezier(0.22,0.61,0.36,1), opacity 0.2s ease,
               margin 0.28s cubic-bezier(0.22,0.61,0.36,1), transform 0.28s ease;
 }
@@ -392,16 +404,28 @@ body.reading #legend { display: none; }
   opacity: 1; margin-bottom: 14px;
   transform: translateY(0);
 }
+/* While a vision surface is staged, the modal steps aside. */
+#ai-dock.staged #ai-modal { height: 0; opacity: 0; margin-bottom: 0; }
 #ai-dock header {
   position: static;
   display: flex; align-items: center; justify-content: space-between;
-  padding: 12px 14px 8px;
+  gap: 10px; padding: 14px 14px 8px;
 }
+/* The stem's identity: its living orb + name + life goal. */
+.ai-who { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.stem-orb { width: 54px; height: 54px; flex-shrink: 0; }
+.ai-who-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 #ai-dock header .k {
-  font-size: 10px; text-transform: uppercase; letter-spacing: 0.14em;
-  color: var(--subflow);
+  font-size: 15px; font-weight: 300; letter-spacing: 0.06em;
+  color: var(--fg); text-shadow: 0 0 18px var(--glow);
+  text-transform: lowercase;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-#ai-dock header .ai-hdr-btns { display: flex; align-items: center; gap: 4px; }
+.ai-sub {
+  font-size: 11.5px; color: var(--muted); line-height: 1.35;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 46ch;
+}
+#ai-dock header .ai-hdr-btns { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
 #ai-history, #ai-new {
   background: none; border: none; color: var(--muted);
   width: 36px; height: 36px; border-radius: 10px;
@@ -414,31 +438,41 @@ body.reading #legend { display: none; }
   color: var(--fg); background: rgba(255,255,255,0.08);
 }
 
-/* Intent pills: pick what this message is for; the turn gets only those tools */
-#ai-intents {
-  display: flex; flex-wrap: wrap; gap: 8px;
-  padding: 0 14px 10px; flex-shrink: 0;
+/* The stem's live wiring: the abilities & behaviours it's always connected to.
+   Derived from the graph — never rewrites FLUJO. */
+#ai-wiring { padding: 2px 14px 10px; flex-shrink: 0; }
+.wire-label {
+  display: block; margin-bottom: 7px;
+  font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.16em; color: var(--muted);
 }
-.ai-intent {
-  flex: 1 1 auto;
-  padding: 9px 14px; border-radius: 999px;
-  border: 1px solid rgba(245,158,11,0.4); background: rgba(245,158,11,0.08);
-  color: var(--fg); font: inherit; font-size: 12px; font-weight: 600;
-  cursor: pointer; white-space: nowrap;
-  transition: background 0.15s, opacity 0.15s, box-shadow 0.15s;
+#ai-wire-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.wire-empty { font-size: 11.5px; color: var(--muted); opacity: 0.7; }
+.wire-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 6px 4px 10px; border-radius: 999px;
+  font: inherit; font-size: 11px; color: var(--fg); cursor: pointer;
+  border: 1px solid var(--border); background: rgba(255,255,255,0.04);
+  transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
+  max-width: 100%; overflow: hidden;
 }
-.ai-intent:hover:not(:disabled) { background: rgba(245,158,11,0.22); }
-.ai-intent.active {
-  background: rgba(245,158,11,0.3); border-color: rgba(245,158,11,0.9);
-  box-shadow: 0 0 18px rgba(245,158,11,0.25);
+.wire-chip i { font-style: normal; font-size: 11px; }
+.wire-chip b {
+  font-weight: 700; font-size: 9.5px; min-width: 15px; text-align: center;
+  padding: 1px 5px; border-radius: 999px; background: rgba(255,255,255,0.08); color: var(--fg);
 }
-.ai-intent:disabled { opacity: 0.28; cursor: default; }
+.wire-chip.ability { border-color: rgba(77,141,246,0.4); background: rgba(77,141,246,0.08); }
+.wire-chip.ability i { color: var(--server); }
+.wire-chip.ability:hover { border-color: rgba(77,141,246,0.85); box-shadow: 0 0 16px rgba(77,141,246,0.22); }
+.wire-chip.ability.disconnected, .wire-chip.ability.disabled { opacity: 0.5; }
+.wire-chip.behaviour { border-color: rgba(155,125,255,0.4); background: rgba(124,92,255,0.08); }
+.wire-chip.behaviour i { color: var(--brand-2); }
+.wire-chip.behaviour:hover { border-color: rgba(155,125,255,0.85); box-shadow: 0 0 16px rgba(124,92,255,0.22); }
 
 /* Setup ask-card: grow a brain-stem / start a heartbeat */
 #ai-setup {
   margin: 0 14px 10px; padding: 12px 14px;
-  border: 1px solid rgba(245,158,11,0.4); border-radius: 12px;
-  background: rgba(245,158,11,0.07);
+  border: 1px solid rgba(124,92,255,0.4); border-radius: 12px;
+  background: rgba(124,92,255,0.08);
   display: flex; flex-direction: column; gap: 9px;
   flex-shrink: 0;
 }
@@ -455,52 +489,21 @@ body.reading #legend { display: none; }
 #ai-setup textarea { resize: vertical; }
 #ai-setup select { cursor: pointer; }
 #ai-setup select option { background: #0c101e; }
-#ai-setup input:focus, #ai-setup textarea:focus, #ai-setup select:focus { border-color: rgba(245,158,11,0.6); }
+#ai-setup input:focus, #ai-setup textarea:focus, #ai-setup select:focus { border-color: var(--border-lit); }
 #ai-setup .hb {
   display: flex; align-items: center; gap: 7px; flex-shrink: 0;
   font-size: 12.5px; color: var(--fg); cursor: pointer; user-select: none;
 }
-#ai-setup .hb input { accent-color: var(--subflow); margin: 0; width: auto; }
+#ai-setup .hb input { accent-color: var(--brand); margin: 0; width: auto; }
 #ai-setup .go {
   padding: 9px 18px; border-radius: 999px; align-self: flex-start;
-  border: 1px solid rgba(245,158,11,0.55); background: rgba(245,158,11,0.15);
+  border: 1px solid rgba(124,92,255,0.6); background: rgba(124,92,255,0.18);
   color: var(--fg); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
-  transition: background 0.2s; white-space: nowrap;
+  transition: background 0.2s, box-shadow 0.2s; white-space: nowrap;
 }
-#ai-setup .go:hover:not(:disabled) { background: rgba(245,158,11,0.3); }
+#ai-setup .go:hover:not(:disabled) { background: rgba(124,92,255,0.34); box-shadow: 0 0 20px rgba(124,92,255,0.3); }
 #ai-setup .go:disabled { opacity: 0.5; cursor: wait; }
 #ai-setup .row .go { align-self: auto; margin-left: auto; }
-.ai-toolbox { margin: 0 14px 8px; border: 1px solid var(--border); border-radius: 10px; flex-shrink: 0; }
-.ai-toolbox summary {
-  cursor: pointer; user-select: none; list-style: none;
-  padding: 7px 11px;
-  font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted);
-}
-.ai-toolbox summary::-webkit-details-marker { display: none; }
-.ai-toolbox summary::before { content: '▸ '; font-size: 9px; }
-.ai-toolbox[open] summary::before { content: '▾ '; }
-.ai-toolbox summary b { color: var(--fg); }
-.ai-tool-actions { display: flex; gap: 7px; padding: 0 11px 7px; }
-.ai-tool-actions button {
-  font: inherit; font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em;
-  padding: 4px 11px; border-radius: 999px; cursor: pointer;
-  color: var(--muted); background: rgba(255,255,255,0.04);
-  border: 1px solid var(--border);
-  transition: color 0.15s, border-color 0.15s, background 0.15s;
-}
-.ai-tool-actions button:hover {
-  color: var(--fg); border-color: rgba(245,158,11,0.55); background: rgba(245,158,11,0.1);
-}
-#ai-tools {
-  display: flex; flex-wrap: wrap; gap: 5px;
-  padding: 2px 11px 10px; max-height: 160px; overflow-y: auto;
-}
-.ai-tool {
-  font: inherit; font-size: 10.5px; padding: 3px 9px; border-radius: 999px; cursor: pointer;
-  background: rgba(245,158,11,0.1); border: 1px solid rgba(245,158,11,0.4); color: var(--fg);
-  transition: opacity 0.15s;
-}
-.ai-tool.off { opacity: 0.32; border-color: var(--border); background: rgba(255,255,255,0.04); }
 #ai-log {
   flex: 1; min-height: 120px; overflow-y: auto;
   display: flex; flex-direction: column; gap: 8px;
@@ -509,7 +512,7 @@ body.reading #legend { display: none; }
 /* Quiet invitation while nothing's been said yet. */
 #ai-log:empty { align-items: center; justify-content: center; }
 #ai-log:empty::before {
-  content: 'Ask anything. The brain-stem can think, use its skills, and delegate to the behaviours above.';
+  content: 'Speak, type, or open a canvas. The brain-stem thinks with its abilities and delegates to the behaviours it is wired to.';
   max-width: 380px; text-align: center;
   color: var(--muted); font-size: 13px; line-height: 1.65; opacity: 0.6;
 }
@@ -581,9 +584,9 @@ body.reading #legend { display: none; }
 /* The always-visible command pill. */
 .ai-inputrow {
   display: flex; gap: 8px; align-items: center;
-  padding: 7px 8px 7px 16px; flex-shrink: 0;
+  padding: 7px 8px 7px 14px; flex-shrink: 0;
   background: var(--panel);
-  border: 1px solid rgba(245,158,11,0.4);
+  border: 1px solid var(--border);
   border-radius: 999px;
   backdrop-filter: blur(14px);
   box-shadow: 0 14px 44px rgba(0,0,0,0.5);
@@ -592,73 +595,227 @@ body.reading #legend { display: none; }
 #ai-dock.open .ai-inputrow,
 .ai-inputrow:hover,
 .ai-inputrow:focus-within {
-  border-color: rgba(245,158,11,0.72);
-  box-shadow: 0 14px 44px rgba(0,0,0,0.5), 0 0 28px rgba(245,158,11,0.22);
+  border-color: var(--border-lit);
+  box-shadow: 0 14px 44px rgba(0,0,0,0.5), 0 0 32px rgba(90,120,255,0.22);
 }
 /* A reply arrived while collapsed — pulse the pill to draw the eye. */
 #ai-dock.unread .ai-inputrow {
-  border-color: rgba(245,158,11,0.95);
+  border-color: rgba(150,180,255,0.9);
   animation: pillpulse 1.3s ease-in-out infinite;
 }
-.ai-spark { color: var(--subflow); font-size: 14px; flex-shrink: 0; opacity: 0.8; }
-#ai-dock.open .ai-spark { animation: heartbeat 2.4s ease-in-out infinite; }
+/* The collapsed presence: a small living dot that flashes on each heartbeat. */
+.ai-presence {
+  width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; margin-left: 2px;
+  background: radial-gradient(circle at 35% 30%, var(--brand-2), var(--brand) 70%);
+  box-shadow: 0 0 10px rgba(124,92,255,0.6);
+  animation: presence-breathe 3.4s ease-in-out infinite;
+}
+.ai-presence.beat { animation: presence-beat 0.7s ease-out; }
+@keyframes presence-breathe {
+  0%, 100% { box-shadow: 0 0 8px rgba(124,92,255,0.45); }
+  50% { box-shadow: 0 0 16px rgba(124,92,255,0.75); }
+}
+@keyframes presence-beat {
+  0% { transform: scale(1); box-shadow: 0 0 10px rgba(124,92,255,0.6); }
+  35% { transform: scale(1.5); box-shadow: 0 0 26px rgba(88,196,255,0.9); }
+  100% { transform: scale(1); box-shadow: 0 0 10px rgba(124,92,255,0.6); }
+}
 #ai-input {
   flex: 1; min-width: 0;
   padding: 9px 2px; border: none; background: none;
   color: var(--fg); font: inherit; font-size: 14px; outline: none;
 }
 #ai-input::placeholder { color: var(--muted); }
+
+/* The mode rail: the vision surfaces (voice · canvas · apps). */
+.ai-rail { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
+.ai-rail .mode {
+  width: 36px; height: 36px; border-radius: 50%; flex-shrink: 0;
+  border: 1px solid var(--border); background: rgba(255,255,255,0.04);
+  color: var(--fg); font-size: 15px; cursor: pointer; opacity: 0.82;
+  display: inline-flex; align-items: center; justify-content: center;
+  transition: background 0.15s, border-color 0.15s, box-shadow 0.15s, opacity 0.15s;
+}
+.ai-rail .mode:hover { opacity: 1; border-color: var(--border-lit); background: rgba(124,92,255,0.12); }
+.ai-rail .mode.active {
+  opacity: 1; border-color: rgba(150,180,255,0.85);
+  background: rgba(124,92,255,0.22); box-shadow: 0 0 18px rgba(124,92,255,0.3);
+}
 #ai-send {
   width: 40px; height: 40px; border-radius: 50%; flex-shrink: 0;
-  border: 1px solid rgba(245,158,11,0.55); background: rgba(245,158,11,0.16);
+  border: 1px solid rgba(124,92,255,0.6);
+  background: radial-gradient(120% 140% at 50% 0%, rgba(124,92,255,0.32), rgba(88,196,255,0.14));
   color: var(--fg); font-size: 17px; cursor: pointer;
-  transition: background 0.2s;
+  transition: background 0.2s, box-shadow 0.2s;
 }
-#ai-send:hover:not(:disabled) { background: rgba(245,158,11,0.32); }
+#ai-send:hover:not(:disabled) { box-shadow: 0 0 22px rgba(124,92,255,0.4); }
 #ai-send:disabled { opacity: 0.4; cursor: default; }
 #ai-send.busy { animation: heartbeat 1.1s ease-in-out infinite; }
+
+/* Vision surfaces: a glass stage that blooms above the dock. */
+#ai-stage {
+  margin-bottom: 14px;
+  background: linear-gradient(180deg, rgba(12,17,34,0.94), rgba(7,10,22,0.96));
+  border: 1px solid var(--border);
+  border-radius: 22px;
+  backdrop-filter: blur(20px);
+  box-shadow: 0 34px 100px rgba(0,0,0,0.62), 0 0 60px rgba(90,120,255,0.10);
+  position: relative;
+  padding: 26px 26px 20px;
+  animation: xp-bloom 0.32s cubic-bezier(0.22,0.61,0.36,1) both;
+}
+@keyframes xp-bloom {
+  from { opacity: 0; transform: translateY(14px); }
+  to { opacity: 1; transform: none; }
+}
+#stage-close {
+  position: absolute; top: 12px; right: 16px;
+  background: none; border: none; color: var(--muted);
+  font-size: 24px; line-height: 1; cursor: pointer; z-index: 2;
+}
+#stage-close:hover { color: var(--fg); }
+.stage-panel { display: none; flex-direction: column; align-items: center; text-align: center; }
+#ai-stage[data-stage="voice"] .stage-panel[data-stage="voice"],
+#ai-stage[data-stage="canvas"] .stage-panel[data-stage="canvas"],
+#ai-stage[data-stage="apps"] .stage-panel[data-stage="apps"] { display: flex; }
+.stage-title {
+  margin: 0; font-size: 22px; font-weight: 300; letter-spacing: 0.14em;
+  text-transform: lowercase; color: var(--fg); text-shadow: 0 0 22px var(--glow);
+}
+.stage-sub { margin: 8px 0 18px; font-size: 13px; color: var(--muted); max-width: 46ch; line-height: 1.5; }
+.stage-hint {
+  margin: 16px 0 0; font-size: 10.5px; letter-spacing: 0.1em; text-transform: uppercase;
+  color: var(--muted); opacity: 0.6;
+}
+
+/* voice */
+.voice-orb { width: 120px; height: 120px; }
+.voice-orb canvas { width: 100%; height: 100%; }
+.voice-wave { width: 100%; max-width: 560px; height: 96px; margin: 6px 0 4px; }
+.voice-transcript { margin: 0 0 18px; font-size: 15px; color: var(--fg); min-height: 22px; max-width: 52ch; line-height: 1.5; }
+.voice-toggle {
+  padding: 12px 30px; border-radius: 999px; font: inherit; font-size: 14px; letter-spacing: 0.06em;
+  cursor: pointer; color: var(--fg);
+  border: 1px solid rgba(88,196,255,0.5);
+  background: radial-gradient(120% 160% at 50% 0%, rgba(88,196,255,0.24), rgba(124,92,255,0.10));
+  transition: box-shadow 0.2s, border-color 0.2s;
+}
+.voice-toggle:hover { box-shadow: 0 0 26px rgba(88,196,255,0.35); }
+.voice-toggle.listening {
+  border-color: rgba(88,196,255,0.95);
+  box-shadow: 0 0 30px rgba(88,196,255,0.5);
+  animation: pillpulse 1.4s ease-in-out infinite;
+}
+
+/* canvas */
+.canvas-surface { width: 100%; max-width: 560px; }
+.artifact {
+  border: 1px solid var(--border); border-radius: 16px; padding: 16px 18px;
+  background: rgba(6,9,18,0.6); text-align: left;
+  box-shadow: inset 0 0 40px rgba(20,30,70,0.3);
+}
+.artifact-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
+.artifact-kind { font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.14em; color: var(--muted); }
+.artifact-name { font-size: 14px; color: var(--fg); }
+.artifact-svg { width: 100%; height: auto; display: block; }
+.artifact-note { margin: 12px 2px 0; font-size: 11.5px; color: var(--muted); line-height: 1.5; }
+
+/* apps */
+.apps-grid {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px;
+  width: 100%; max-width: 620px;
+}
+.apps-empty { font-size: 13px; color: var(--muted); }
+.app-tile {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 4px;
+  padding: 14px; border-radius: 14px; cursor: pointer; text-align: left;
+  border: 1px solid var(--border); background: rgba(12,18,34,0.55);
+  transition: transform 0.25s cubic-bezier(0.2,0.8,0.2,1), border-color 0.25s, box-shadow 0.25s;
+}
+.app-tile:hover { transform: translateY(-4px); border-color: rgba(77,141,246,0.7); box-shadow: 0 14px 40px rgba(40,80,255,0.16); }
+.app-tile.poked { animation: pillpulse 0.6s ease-in-out; }
+.app-tile.disconnected, .app-tile.disabled { opacity: 0.55; }
+.app-icon { font-size: 22px; color: var(--server); }
+.app-name { font-size: 14px; color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+.app-meta { font-size: 10.5px; color: var(--muted); }
+.app-open { margin-top: 4px; font-size: 11px; color: var(--cyan); }
 
 @media (max-width: 720px) {
   #ai-dock { left: 12px; right: 12px; transform: none; width: auto; bottom: 16px; }
   #ai-dock.open #ai-modal { height: 78vh; }
+  .ai-sub { max-width: 24ch; }
 }
 
-/* Heartbeat status bar — top right, overview only. The transcript itself is
-   a stored conversation and opens in the chat dock (💬). */
+/* The life cluster — heartbeat(s) + beat-now + pause, unified in the top bar
+   and ALWAYS visible. ♥ opens the beats dropdown; transcripts are stored
+   conversations and open in the chat dock (💬). */
+#life { display: flex; align-items: center; gap: 8px; pointer-events: auto; }
 #heartbeat {
-  right: 22px; top: 84px;
-  width: min(340px, calc(100vw - 44px));
-  display: flex; flex-direction: column;
-  padding: 10px 14px 11px;
+  display: flex; align-items: center; gap: 8px;
+  padding: 5px 12px; border-radius: 999px;
+  border: 1px solid rgba(255,92,138,0.4);
+  background: var(--panel); color: var(--fg);
+  font: inherit; font-size: 11px; cursor: pointer;
+  backdrop-filter: blur(8px);
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+#heartbeat:hover, #heartbeat[aria-expanded="true"] {
+  border-color: rgba(255,92,138,0.8);
+  box-shadow: 0 0 16px rgba(255,92,138,0.18);
+}
+#heartbeat .beat { color: #ff5c8a; font-size: 13px; }
+#heartbeat.running .beat { animation: heartbeat 1.1s ease-in-out infinite; display: inline-block; }
+#heartbeat.paused .beat { opacity: 0.45; }
+#hb-ecg { display: block; width: 130px; height: 26px; }
+#hb-next {
+  font-size: 10px; color: var(--muted); letter-spacing: 0.04em;
+  white-space: nowrap; max-width: 90px; overflow: hidden; text-overflow: ellipsis;
+}
+#hb-count {
+  min-width: 16px; padding: 1px 5px; border-radius: 999px;
+  background: rgba(255,92,138,0.2); border: 1px solid rgba(255,92,138,0.45);
+  color: #ff9ab8; font-size: 10px; text-align: center;
+}
+#hb-beat-now {
+  width: 34px; height: 34px; border-radius: 50%;
+  border: 1px solid rgba(255,92,138,0.5);
+  background: rgba(255,92,138,0.12); color: var(--fg);
+  font-size: 14px; cursor: pointer;
+  transition: background 0.2s, box-shadow 0.2s;
+}
+#hb-beat-now:hover { background: rgba(255,92,138,0.28); box-shadow: 0 0 16px rgba(255,92,138,0.3); }
+#hb-beat-now.firing, .hb-run.firing { animation: heartbeat 0.55s ease-in-out infinite; }
+
+/* The beats dropdown: every planned execution, each a heartbeat row. */
+#hb-panel {
+  position: fixed; z-index: 12;
+  top: 72px; right: 22px;
+  width: min(380px, calc(100vw - 44px));
+  max-height: min(60vh, 480px); overflow-y: auto;
+  padding: 8px;
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 16px;
   backdrop-filter: blur(12px);
+  box-shadow: 0 14px 48px rgba(0,0,0,0.5);
 }
-#heartbeat header {
-  position: static;
-  display: flex; align-items: baseline; gap: 8px;
-  padding: 0 0 6px;
-  font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.12em; color: var(--muted);
-}
-#heartbeat .beat { color: #ff5c8a; font-size: 13px; }
-#heartbeat.running .beat { animation: heartbeat 1.1s ease-in-out infinite; display: inline-block; }
-#hb-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-#hb-time { margin-left: auto; flex-shrink: 0; text-transform: none; letter-spacing: normal; }
-#hb-open {
+#hb-panel .hb-empty { margin: 6px 8px; font-size: 12px; color: var(--muted); }
+.hb-row { padding: 8px 10px; border-radius: 11px; }
+.hb-row:hover { background: rgba(140,160,220,0.07); }
+.hb-row + .hb-row { margin-top: 2px; }
+.hb-row.off { opacity: 0.55; }
+.hb-row-head { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.hb-row-head .beat { color: #ff5c8a; font-size: 13px; flex-shrink: 0; }
+.hb-row.running .beat { animation: heartbeat 1.1s ease-in-out infinite; display: inline-block; }
+.hb-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.hb-when { margin-left: auto; flex-shrink: 0; font-size: 10.5px; color: var(--muted); }
+.hb-run, .hb-chat {
   background: none; border: none; cursor: pointer; padding: 0;
   font-size: 13px; line-height: 1; flex-shrink: 0;
   filter: grayscale(0.6); transition: filter 0.15s;
 }
-#hb-open:hover:not(:disabled) { filter: none; }
-#hb-open:disabled { opacity: 0.3; cursor: default; }
-#hb-ecg-row { position: relative; }
-#hb-ecg { display: block; width: 100%; height: 34px; }
-#hb-next {
-  position: absolute; right: 2px; top: 1px;
-  font-size: 10px; color: var(--muted); letter-spacing: 0.04em;
-  text-shadow: 0 0 6px rgba(5,7,15,0.9);
-}
+.hb-run:hover, .hb-chat:hover:not(:disabled) { filter: none; }
+.hb-chat:disabled { opacity: 0.3; cursor: default; }
 
 /* "conversation here" bubbles in the node detail panel */
 #p-rels .nmsgs { list-style: none; margin: 0; padding: 4px 0 2px; display: flex; flex-direction: column; gap: 6px; }
@@ -670,39 +827,37 @@ body.reading #legend { display: none; }
 #p-rels .nmsgs .nmsg.ai { background: rgba(125,123,255,0.1); border: 1px solid rgba(125,123,255,0.22); }
 #p-rels .nmsgs .nmsg.user { background: rgba(0,0,0,0.25); border: 1px solid var(--border); color: var(--muted); }
 
-#hb-tempo {
+.hb-tempo {
   display: flex; align-items: center; gap: 9px;
-  padding: 9px 2px 1px;
-  margin-top: 8px;
-  border-top: 1px solid var(--border);
+  padding: 7px 2px 1px 21px;
   font-size: 10.5px; color: var(--muted);
 }
-#hb-tempo .t { text-transform: uppercase; letter-spacing: 0.12em; flex-shrink: 0; }
-#hb-tempo-label { flex-shrink: 0; min-width: 74px; text-align: right; }
-#hb-tempo-slider {
+.hb-tempo .t { text-transform: uppercase; letter-spacing: 0.12em; flex-shrink: 0; }
+.hb-tempo-label { flex-shrink: 0; min-width: 74px; text-align: right; }
+.hb-tempo input[type="range"] {
   flex: 1; min-width: 0;
   appearance: none; -webkit-appearance: none;
   height: 3px; border-radius: 2px;
   background: rgba(140, 160, 220, 0.3);
   outline: none; cursor: pointer;
 }
-#hb-tempo-slider::-webkit-slider-thumb {
+.hb-tempo input[type="range"]::-webkit-slider-thumb {
   appearance: none; -webkit-appearance: none;
   width: 13px; height: 13px; border-radius: 50%;
   background: #ff5c8a;
   border: 2px solid rgba(10, 14, 28, 0.9);
   box-shadow: 0 0 8px rgba(255, 92, 138, 0.6);
 }
-#hb-tempo-slider::-moz-range-thumb {
+.hb-tempo input[type="range"]::-moz-range-thumb {
   width: 11px; height: 11px; border-radius: 50%;
   background: #ff5c8a;
   border: 2px solid rgba(10, 14, 28, 0.9);
   box-shadow: 0 0 8px rgba(255, 92, 138, 0.6);
 }
-#hb-tempo.hidden { display: none; }
 
-@media (max-width: 720px) {
-  #heartbeat { display: none; }
+/* Narrow screens: the ECG strip yields, the ♥ / ⚡ / pause survive. */
+@media (max-width: 920px) {
+  #hb-ecg, #hb-next { display: none; }
 }
 
 #tooltip {
@@ -791,16 +946,16 @@ body.reading #legend { display: none; }
   max-width: min(80vw, 560px);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   padding: 11px 22px; border-radius: 999px;
-  border: 1px solid rgba(245,158,11,0.55);
+  border: 1px solid rgba(124,92,255,0.55);
   background: rgba(10, 14, 28, 0.85);
-  box-shadow: 0 0 22px rgba(245,158,11,0.22);
+  box-shadow: 0 0 22px rgba(124,92,255,0.22);
   color: var(--fg); font: inherit; font-size: 13px; font-weight: 600;
   cursor: pointer;
   transition: background 0.15s, box-shadow 0.15s;
 }
 .hist-continue:hover {
-  background: rgba(245,158,11,0.16);
-  box-shadow: 0 0 30px rgba(245,158,11,0.4);
+  background: rgba(124,92,255,0.16);
+  box-shadow: 0 0 30px rgba(124,92,255,0.4);
 }
 
 /* Chat bubbles: the brain speaking, floating over the neuron that said it */
@@ -821,7 +976,7 @@ body.reading #legend { display: none; }
 .chat-bubble .who {
   font-size: 10px; font-weight: 700;
   text-transform: uppercase; letter-spacing: 0.08em;
-  color: var(--subflow); margin-bottom: 2px;
+  color: var(--brand-2); margin-bottom: 2px;
 }
 .chat-bubble .text {
   white-space: pre-wrap; word-break: break-word;
