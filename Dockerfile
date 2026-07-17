@@ -6,8 +6,14 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
 COPY . .
-# Served from the container root; FLUJO is reached via same-origin proxies.
-RUN BRAIN_BASE=/ npm run build
+# Build with a RELATIVE base (vite.config default './') so the same dist works
+# whether it's served from the container root (this image's manager) OR mounted
+# under a sub-path by a consumer (brain-online serves it at /viewer/). An
+# absolute base ('/assets/…') only resolves at root and 404s under a sub-path;
+# relative refs resolve against the document location, so both hosts work. The
+# viewer is query-routed (?flujo=…, no path segments), so the manager's
+# deep-path SPA fallback never breaks relative asset URLs.
+RUN BRAIN_BASE=./ npm run build
 
 FROM node:22-alpine
 WORKDIR /app/manager
