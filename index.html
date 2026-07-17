@@ -21,7 +21,16 @@
       </div>
       <div class="controls">
         <a id="lobby-link" class="lobby-link hidden" href="./lobby.html">⬡ brains</a>
-        <button id="pause-btn" title="Pause the heartbeat and every running flow">⏸ pause</button>
+        <div id="life">
+          <button id="heartbeat" class="hidden" title="the brain's heartbeats — click for details" aria-expanded="false" aria-controls="hb-panel">
+            <span class="beat">♥</span>
+            <canvas id="hb-ecg" width="170" height="30"></canvas>
+            <span id="hb-next"></span>
+            <span id="hb-count" class="hidden"></span>
+          </button>
+          <button id="hb-beat-now" class="hidden" title="beat now — wake the brain immediately">⚡</button>
+          <button id="pause-btn" title="Pause the heartbeat and every running flow">⏸ pause</button>
+        </div>
         <label class="group-picker">
           <span>view</span>
           <select id="view-mode">
@@ -79,23 +88,7 @@
     </section>
     <button id="panel-tab" class="hidden" title="show details">details</button>
 
-    <aside id="heartbeat" class="hidden">
-      <header>
-        <span class="beat">♥</span>
-        <span id="hb-title">heartbeat</span>
-        <span id="hb-time"></span>
-        <button id="hb-open" title="open this heartbeat's conversation in the chat">💬</button>
-      </header>
-      <div id="hb-ecg-row">
-        <canvas id="hb-ecg" width="300" height="34"></canvas>
-        <span id="hb-next"></span>
-      </div>
-      <div id="hb-tempo" class="hidden" title="how often the brain wakes">
-        <span class="t">tempo</span>
-        <input id="hb-tempo-slider" type="range" min="0" max="6" step="1" />
-        <span id="hb-tempo-label"></span>
-      </div>
-    </aside>
+    <div id="hb-panel" class="hidden"></div>
 
     <div id="activity" class="hidden">
       <span class="pulse"></span>
@@ -112,34 +105,63 @@
     </footer>
 
     <section id="ai-dock" class="hidden">
+      <!-- vision surfaces bloom above the dock: voice, canvas, MCP apps -->
+      <div id="ai-stage" class="hidden" data-stage="">
+        <button id="stage-close" aria-label="close">×</button>
+
+        <div class="stage-panel" data-stage="voice">
+          <div class="voice-orb"><canvas id="voice-orb"></canvas></div>
+          <canvas id="voice-wave" class="voice-wave" width="640" height="120"></canvas>
+          <p id="voice-transcript" class="voice-transcript">tap the orb and just talk to your brain</p>
+          <button id="voice-toggle" class="voice-toggle" type="button">tap to speak</button>
+          <p class="stage-hint">voice is on the way — this previews how it will feel</p>
+        </div>
+
+        <div class="stage-panel" data-stage="canvas">
+          <h2 class="stage-title">canvas</h2>
+          <p class="stage-sub">a shared surface where the brain draws — and MCP&nbsp;Apps render their own living UI</p>
+          <div id="canvas-surface" class="canvas-surface"></div>
+          <p class="stage-hint">preview — live artifacts &amp; in-app canvases land here</p>
+        </div>
+
+        <div class="stage-panel" data-stage="apps">
+          <h2 class="stage-title">apps</h2>
+          <p class="stage-sub">the abilities your brain is wired to, as apps you can open</p>
+          <div id="apps-grid" class="apps-grid"></div>
+          <p class="stage-hint">preview — MCP&nbsp;Apps become interactive here</p>
+        </div>
+      </div>
+
       <div id="ai-modal">
         <header>
-          <span class="k" id="ai-title">talk to the brain</span>
+          <div class="ai-who">
+            <canvas id="stem-orb" class="stem-orb" width="80" height="80"></canvas>
+            <div class="ai-who-text">
+              <span class="k" id="ai-title">brain-stem</span>
+              <span class="ai-sub" id="ai-sub">the mind's core</span>
+            </div>
+          </div>
           <span class="ai-hdr-btns">
             <button id="ai-new" aria-label="new conversation" title="new conversation">＋</button>
             <button id="ai-history" aria-label="conversation history" title="conversation history">🕘</button>
           </span>
         </header>
         <div id="ai-setup" class="hidden"></div>
-        <details class="ai-toolbox">
-          <summary>behaviours the brain-stem can delegate to <b id="ai-tool-count">0</b></summary>
-          <div class="ai-tool-actions">
-            <button id="ai-tools-all" type="button">select all</button>
-            <button id="ai-tools-none" type="button">unselect all</button>
-          </div>
-          <div id="ai-tools"></div>
-        </details>
-        <div id="ai-log"></div>
-        <div id="ai-intents">
-          <button class="ai-intent" data-intent="use-behaviour">🧠 Use behaviour</button>
-          <button class="ai-intent" data-intent="learn-behaviour">🌱 Learn behaviour</button>
-          <button class="ai-intent" data-intent="use-skill">🔧 Use skill</button>
-          <button class="ai-intent" data-intent="learn-skill">✨ Learn skill</button>
+        <div id="ai-wiring" class="hidden">
+          <span class="wire-label">always connected to</span>
+          <div id="ai-wire-chips"></div>
         </div>
+        <div id="ai-log"></div>
       </div>
+
       <div class="ai-inputrow">
-        <span class="ai-spark" aria-hidden="true">✦</span>
+        <span class="ai-presence" aria-hidden="true"></span>
         <input id="ai-input" type="text" placeholder="say something to the brain… (hover to open)" autocomplete="off" spellcheck="false" />
+        <div class="ai-rail">
+          <button id="mode-voice" class="mode" type="button" title="talk with your voice" aria-label="voice">🎙</button>
+          <button id="mode-canvas" class="mode" type="button" title="open a canvas" aria-label="canvas">▦</button>
+          <button id="mode-apps" class="mode" type="button" title="apps the brain is wired to" aria-label="apps">◱</button>
+        </div>
         <button id="ai-send" aria-label="send">↑</button>
       </div>
     </section>

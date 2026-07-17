@@ -110,6 +110,14 @@ The **⏸ pause** button in the viewer header freezes the whole mind; the chat d
 - **Continuity**: the dock keeps the full message history client-side and re-sends it each turn with `metadata.conversationId` (FLUJO treats the request's message list as the authoritative replacement). A new brain-stem starts a fresh conversation.
 - **Queueing**: messages typed while a turn is in flight render as dimmed bubbles and dispatch in order when the current turn finishes.
 
+### The life cluster (heartbeats)
+
+The heartbeat UI lives **in the header, unified with ⏸ pause** and always visible (`src/data/heartbeat.ts` + the `#life` cluster in `src/ui/hud.ts`). FLUJO is the source of truth: the watcher polls `GET /api/planned-executions` every 10s and mirrors **every** planned execution — enabled or not, fired or not — as a heartbeat:
+
+- The header pill shows a live ECG for the primary beat (running first, else soonest `status.nextRun`), a countdown, and a count chip when more than one beat exists. Paused/disarmed states draw a **flatline** instead of hiding the cluster.
+- Clicking the pill opens a dropdown with one row per planned execution: name, status (`beating… / next in… / last… / off`), a **tempo slider** (schedule-driven rows; `PATCH /api/planned-executions/{id}` with the new cron), **⚡ beat now** (`POST /api/planned-executions/{id}/run` — FLUJO's run-now works even while paused), and **💬** to open the last run's stored conversation in the chat dock.
+- The header also carries a top-level ⚡ that fires the primary beat.
+
 ### Adopted instances: vitals & setup asks
 
 On every graph rebuild (plus a slow 20s poll) the dock checks the brain's vitals via `GET /api/planned-executions`:

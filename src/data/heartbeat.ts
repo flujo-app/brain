@@ -1,34 +1,65 @@
 import { flujoBase } from './loader';
 
 /**
- * Watches the brain's heartbeat: FLUJO's planned executions drive the
- * autonomous wake-ups. This poller finds the freshest beat and reports a
- * compact status (name, running/completed, when, tempo) — the transcript
- * itself lives in FLUJO as a stored conversation and opens in the chat dock.
+ * Watches the brain's heartbeats: FLUJO's planned executions drive the
+ * autonomous wake-ups. FLUJO is the single source of truth — this poller
+ * mirrors EVERY planned execution (fired or not, enabled or not) so the HUD
+ * can show them all; the transcripts live in FLUJO as stored conversations
+ * and open in the chat dock.
  *
  * Resilience rule: a transient fetch failure never blanks the HUD — only a
- * successful poll that finds no heartbeat does.
+ * successful poll updates it.
  */
 
 export interface HeartbeatInfo {
+  /** The planned execution's id — target for tempo / beat-now calls. */
+  executionId: string;
   /** The planned execution's name (e.g. "misty-fjord heartbeat"). */
   name: string;
   flowId: string | null;
-  /** Last run status: running / completed / error / skipped. */
-  status: string;
-  /** When the beat fired (ISO timestamp). */
-  firedAt: string;
+  /** Armed to fire on its own (execution.enabled). */
+  enabled: boolean;
+  /** A beat is running right now. */
+  running: boolean;
+  /** Last run status: completed / error / skipped — null if it never fired. */
+  lastStatus: string | null;
+  /** When the last beat fired (ISO timestamp) — null if it never fired. */
+  firedAt: string | null;
   /** The stored conversation of the last beat (openable in the chat dock). */
   conversationId: string | null;
-  /** The planned execution behind the beat — target for the tempo slider. */
-  executionId: string | null;
   /** Current schedule cron; null when the trigger is not schedule-based. */
   cron: string | null;
+  /** Trigger kind as FLUJO reports it (schedule / …). */
+  triggerType: string | null;
+  /** FLUJO's own "next fire" prediction (ISO), null when nothing is armed. */
+  nextRun: string | null;
+}
+
+/** Everything the HUD needs: the global pause switch + every beat. */
+export interface HeartbeatState {
+  paused: boolean;
+  beats: HeartbeatInfo[];
 }
 
 interface PlannedListEntry {
-  execution?: { id?: string; name?: string; flowId?: string; trigger?: { type?: string; cron?: string } };
+  execution?: {
+    id?: string;
+    name?: string;
+    flowId?: string;
+    enabled?: boolean;
+    trigger?: { type?: string; cron?: string };
+  };
+  status?: { nextRun?: string | null; running?: boolean; runningSince?: string };
   lastRun?: { conversationId?: string; firedAt?: string; finishedAt?: string; status?: string };
+}
+
+/** Sort: running beats first, then armed ones by soonest next fire, then rest. */
+function beatOrder(a: HeartbeatInfo, b: HeartbeatInfo): number {
+  if (a.running !== b.running) return a.running ? -1 : 1;
+  if (a.enabled !== b.enabled) return a.enabled ? -1 : 1;
+  if (a.nextRun && b.nextRun) return a.nextRun.localeCompare(b.nextRun);
+  if (a.nextRun !== b.nextRun) return a.nextRun ? -1 : 1;
+  return a.name.localeCompare(b.name);
 }
 
 export class HeartbeatWatcher {
@@ -38,7 +69,7 @@ export class HeartbeatWatcher {
   private lastSig: string | null = null;
 
   constructor(
-    private onUpdate: (h: HeartbeatInfo | null) => void,
+    private onUpdate: (state: HeartbeatState) => void,
     private pollMs = 10_000,
   ) {}
 
@@ -64,28 +95,27 @@ export class HeartbeatWatcher {
       const { executions, paused } = (await res.json()) as { executions?: PlannedListEntry[]; paused?: boolean };
       if (!Array.isArray(executions)) return;
 
-      // A paused brain has no heartbeat to show — the scheduler is frozen.
-      if (paused) return this.push(null);
+      const beats = executions
+        .filter((e) => e.execution?.id)
+        .map((e): HeartbeatInfo => {
+          const run = e.lastRun;
+          return {
+            executionId: e.execution!.id!,
+            name: e.execution?.name ?? 'heartbeat',
+            flowId: e.execution?.flowId ?? null,
+            enabled: e.execution?.enabled !== false,
+            running: Boolean(e.status?.running) || (Boolean(run?.firedAt) && !run?.finishedAt && run?.status === undefined),
+            lastStatus: run?.status ?? (run?.firedAt ? (run.finishedAt ? 'completed' : 'running') : null),
+            firedAt: run?.firedAt ?? null,
+            conversationId: run?.conversationId || null,
+            cron: e.execution?.trigger?.type === 'schedule' ? e.execution.trigger.cron ?? null : null,
+            triggerType: e.execution?.trigger?.type ?? null,
+            nextRun: e.status?.nextRun ?? null,
+          };
+        })
+        .sort(beatOrder);
 
-      // The heartbeat: prefer executions named like one, then schedule-driven
-      // ones, then any that ever fired — freshest fire wins.
-      const fired = executions.filter((e) => e.lastRun?.firedAt);
-      const named = fired.filter((e) => /heartbeat/i.test(e.execution?.name ?? ''));
-      const scheduled = fired.filter((e) => e.execution?.trigger?.type === 'schedule');
-      const pool = named.length ? named : scheduled.length ? scheduled : fired;
-      const beat = pool.sort((a, b) => (b.lastRun?.firedAt ?? '').localeCompare(a.lastRun?.firedAt ?? ''))[0];
-      if (!beat) return this.push(null); // a real answer: no heartbeat exists
-
-      const run = beat.lastRun!;
-      this.push({
-        name: beat.execution?.name ?? 'heartbeat',
-        flowId: beat.execution?.flowId ?? null,
-        status: run.status ?? (run.finishedAt ? 'completed' : 'running'),
-        firedAt: run.firedAt ?? '',
-        conversationId: run.conversationId ?? null,
-        executionId: beat.execution?.id ?? null,
-        cron: beat.execution?.trigger?.type === 'schedule' ? beat.execution.trigger.cron ?? null : null,
-      });
+      this.push({ paused: Boolean(paused), beats });
     } catch {
       // FLUJO temporarily unreachable — keep whatever is shown, retry next tick.
     } finally {
@@ -93,15 +123,20 @@ export class HeartbeatWatcher {
     }
   }
 
-  private push(h: HeartbeatInfo | null): void {
-    const sig = h ? `${h.firedAt}|${h.status}|${h.cron}|${h.conversationId}` : 'null';
+  private push(state: HeartbeatState): void {
+    const sig =
+      `${state.paused}|` +
+      state.beats
+        .map((b) => `${b.executionId}:${b.firedAt}:${b.running}:${b.cron}:${b.nextRun}:${b.enabled}:${b.conversationId}`)
+        .join('|');
     if (sig === this.lastSig) return;
     this.lastSig = sig;
-    this.onUpdate(h);
+    this.onUpdate(state);
   }
 }
 
-/** Re-arm the heartbeat's schedule with a new cron (the tempo slider). */
+/** Re-arm a beat's schedule with a new cron (the tempo slider). FLUJO is the
+ *  source of truth — this PATCHes the real planned execution, nothing else. */
 export async function setHeartbeatTempo(executionId: string, cron: string): Promise<void> {
   const base = flujoBase();
   if (!base) throw new Error('FLUJO is not reachable');
@@ -109,6 +144,20 @@ export async function setHeartbeatTempo(executionId: string, cron: string): Prom
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ trigger: { type: 'schedule', cron, catchUp: false } }),
+  });
+  if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
+}
+
+/** Beat now: fire a planned execution immediately (works even while paused).
+ *  FLUJO's endpoint waits for the run to finish — callers should not await
+ *  this to unblock the UI; the watcher picks the run up on its next poll. */
+export async function beatNow(executionId: string): Promise<void> {
+  const base = flujoBase();
+  if (!base) throw new Error('FLUJO is not reachable');
+  const res = await fetch(`${base}/api/planned-executions/${encodeURIComponent(executionId)}/run`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: '{}',
   });
   if (!res.ok) throw new Error(`${res.status} ${res.statusText}`);
 }

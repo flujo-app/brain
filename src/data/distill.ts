@@ -478,3 +478,65 @@ export function distill(
 
   return { neurons, synapses, servers };
 }
+
+// ---- the brain-stem's live wiring -----------------------------------------
+
+export interface WiredAbility {
+  server: string;
+  status: ServerStatus;
+  /** How many behaviours bind this ability. */
+  count: number;
+}
+
+export interface WiredBehaviour {
+  id: string;
+  name: string;
+  /** How many distinct subflows this behaviour fans out to. */
+  count: number;
+}
+
+/** The abilities and behaviours the brain-stem is always "connected to". */
+export interface Wiring {
+  abilities: WiredAbility[];
+  behaviours: WiredBehaviour[];
+}
+
+/**
+ * The brain-stem's live wiring, derived purely from the distilled graph (it
+ * never touches FLUJO): the abilities (MCP servers) bound by the most
+ * behaviours, and the behaviours that fan out to the most subflows — the most
+ * central tools and orchestrators in the whole brain. This is what the dock
+ * surfaces as "always connected to what matters".
+ */
+export function rankWiring(
+  graph: BrainGraph,
+  opts: { topAbilities?: number; topBehaviours?: number; excludeId?: string | null } = {},
+): Wiring {
+  const { topAbilities = 5, topBehaviours = 5, excludeId = null } = opts;
+  const behaviourNeurons = graph.neurons.filter((n) => n.kind !== 'ability' && n.kind !== 'resource');
+
+  // Abilities ranked by how many behaviours bind them.
+  const use = new Map<string, number>();
+  for (const n of behaviourNeurons) {
+    for (const s of new Set(n.servers)) use.set(s, (use.get(s) ?? 0) + 1);
+  }
+  const abilities: WiredAbility[] = [...use.entries()]
+    .map(([server, count]) => ({ server, count, status: graph.servers[server] ?? 'unknown' }))
+    .sort((a, b) => b.count - a.count || a.server.localeCompare(b.server))
+    .slice(0, topAbilities);
+
+  // Behaviours ranked by outgoing subflow calls (fan-out), stem excluded.
+  const byId = new Map(graph.neurons.map((n) => [n.id, n]));
+  const behaviours: WiredBehaviour[] = behaviourNeurons
+    .filter((n) => n.id !== excludeId)
+    .map((n) => ({
+      id: n.id,
+      name: n.name,
+      count: new Set(n.subflowRefs.filter((r) => byId.has(r) && r !== n.id)).size,
+    }))
+    .filter((b) => b.count > 0)
+    .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name))
+    .slice(0, topBehaviours);
+
+  return { abilities, behaviours };
+}
