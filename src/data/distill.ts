@@ -188,19 +188,26 @@ export function abilityId(server: string): string {
 
 /**
  * Match a live tool-call name to the ability (MCP server) it belongs to.
- * FLUJO tool names are typically "<server>_<tool>" or "-_-"-joined; the
- * longest server-name prefix followed by a separator wins.
+ * FLUJO tool names are typically "<server>__<tool>" or "-_-"-joined, with the
+ * server half SANITIZED for the wire (anything outside [a-zA-Z0-9_-] becomes
+ * "_", so "PowerShell.MCP" arrives as "PowerShell_MCP__…") — match against
+ * the same sanitized form. The longest server-name prefix followed by a
+ * separator wins.
  */
 export function abilityForTool(graph: BrainGraph, toolName?: string): Neuron | null {
   if (!toolName) return null;
   const t = toolName.toLowerCase();
   let best: Neuron | null = null;
+  let bestLen = 0;
   for (const n of graph.neurons) {
     if (n.kind !== 'ability') continue;
-    const s = n.name.toLowerCase();
+    const s = n.name.toLowerCase().replace(/[^a-z0-9_-]/g, '_');
     const next = t[s.length];
     if (t.startsWith(s) && (next === undefined || !/[a-z0-9]/.test(next))) {
-      if (!best || s.length > best.name.length) best = n;
+      if (s.length > bestLen) {
+        best = n;
+        bestLen = s.length;
+      }
     }
   }
   return best;

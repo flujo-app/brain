@@ -93,6 +93,12 @@ export class Brain2D {
   private edgeBoostDir: number[] = [];
   /** Per-flash tint override (hex string); null = the edge's resting colour. */
   private edgeFlashColor: (string | null)[] = [];
+  /** Per-edge flash decay rate (set by the flash that lit it). */
+  private edgeDecay: number[] = [];
+  /** Sustained-hold refcount per edge (a subagent running); pulses until released. */
+  private edgeHold: number[] = [];
+  /** conversationId -> caller→subagent links held lit while the child runs. */
+  private heldLinks = new Map<string, Array<[string, string]>>();
   /** Per-edge width multiplier from the usage heatmap. */
   private widthMul: number[] = [];
   private followExec = true;
@@ -229,6 +235,10 @@ export class Brain2D {
     this.edgeBoost = new Array(this.edges.length).fill(0);
     this.edgeBoostDir = new Array(this.edges.length).fill(1);
     this.edgeFlashColor = new Array(this.edges.length).fill(null);
+    this.edgeDecay = new Array(this.edges.length).fill(1.6);
+    this.edgeHold = new Array(this.edges.length).fill(0);
+    // The rebuilt edge arrays start with no holds — drop the bookkeeping too.
+    this.heldLinks.clear();
     // Bake accumulated usage heat into resting link widths.
     this.widthMul = this.edges.map((e) => linkWidthMul(linkKey(e.synapse.source, e.synapse.target, e.synapse.kind)));
 
@@ -616,14 +626,28 @@ export class Brain2D {
       case 'subflow-start':
         if (e.flowId && e.subflowId) {
           fireLink(e.flowId, e.subflowId, 'subflow');
-          this.flash(e.flowId, e.subflowId);
+          // The handoff keeps the caller<>subagent link lit until the child
+          // finishes (subflow-done / run-done releases it).
+          this.holdLink(e.flowId, e.subflowId);
+          if (!this.heldLinks.has(e.conversationId)) this.heldLinks.set(e.conversationId, []);
+          this.heldLinks.get(e.conversationId)!.push([e.flowId, e.subflowId]);
         }
         this.touchFlow(e.conversationId, e.subflowId ?? null);
         this.hudActivity = { flowId: e.subflowId ?? e.flowId };
         this.followTo(e.subflowId ?? null);
         break;
       case 'subflow-done':
-        if (e.subflowId) this.convFlows.get(e.conversationId)?.delete(e.subflowId);
+        if (e.subflowId) {
+          this.convFlows.get(e.conversationId)?.delete(e.subflowId);
+          if (e.flowId) {
+            this.releaseLink(e.flowId, e.subflowId);
+            const held = this.heldLinks.get(e.conversationId);
+            const idx = held?.findIndex(([a, b]) => a === e.flowId && b === e.subflowId) ?? -1;
+            if (held && idx >= 0) held.splice(idx, 1);
+            // The result travelling back to the caller.
+            this.flash(e.subflowId, e.flowId);
+          }
+        }
         this.hudActivity = { flowId: e.flowId };
         break;
       case 'node-enter':
@@ -643,7 +667,8 @@ export class Brain2D {
           fireNeuron(ability.id);
           if (e.flowId) {
             fireLink(e.flowId, ability.id, 'server');
-            this.flash(e.flowId, ability.id);
+            // Half decay = the ability link stays lit twice as long.
+            this.flash(e.flowId, ability.id, { decay: 0.8 });
           }
         }
         if (e.toolName) {
@@ -659,7 +684,7 @@ export class Brain2D {
         // The reply travelling back from the ability — reverse flash, red on error.
         const ability = abilityForTool(this.graph, e.toolName);
         if (ability && e.flowId) {
-          this.flash(ability.id, e.flowId, e.isError ? { color: SYNAPSE_ERROR } : undefined);
+          this.flash(ability.id, e.flowId, e.isError ? { color: SYNAPSE_ERROR, decay: 0.8 } : { decay: 0.8 });
         }
         break;
       }
@@ -693,6 +718,9 @@ export class Brain2D {
         break;
       case 'run-done':
         this.convFlows.delete(e.conversationId);
+        // A dropped subflow-done can't strand a held link past its run.
+        for (const [a, b] of this.heldLinks.get(e.conversationId) ?? []) this.releaseLink(a, b);
+        this.heldLinks.delete(e.conversationId);
         if (this.flowGraph?.setActive(null)) this.needsDraw = true;
         if (!this.convFlows.size) this.hudActivity = null;
         break;
@@ -733,24 +761,53 @@ export class Brain2D {
     });
   }
 
-  /**
-   * Flash the synapse between two neurons; the pulse travels from -> to.
-   * `opts.color` overrides the tint (e.g. red for an errored tool result).
-   */
-  private flash(fromId: string, toId: string, opts: { color?: number } = {}): void {
-    const i = this.edges.findIndex(
+  private edgeIndex(fromId: string, toId: string): number {
+    return this.edges.findIndex(
       (e) =>
         (e.synapse.source === fromId && e.synapse.target === toId) ||
         (e.synapse.source === toId && e.synapse.target === fromId),
     );
+  }
+
+  /**
+   * Flash the synapse between two neurons; the pulse travels from -> to.
+   * `opts.color` overrides the tint (e.g. red for an errored tool result);
+   * `opts.decay` the exponential decay rate (default 1.6, lower lives longer).
+   */
+  private flash(fromId: string, toId: string, opts: { color?: number; decay?: number } = {}): void {
+    const i = this.edgeIndex(fromId, toId);
     if (i < 0) return;
     this.edgeBoost[i] = 1;
+    this.edgeDecay[i] = opts.decay ?? 1.6;
     // The pulse travels from the acting end toward the other.
     this.edgeBoostDir[i] = this.edges[i].synapse.source === fromId ? 1 : -1;
     this.edgeFlashColor[i] = opts.color != null ? hexOf(opts.color) : null;
     // Fresh traffic may have just bumped this link's heat — refresh its width.
     const e = this.edges[i].synapse;
     this.widthMul[i] = linkWidthMul(linkKey(e.source, e.target, e.kind));
+  }
+
+  /**
+   * Hold the synapse lit (a subagent is running): the launch flash decays into
+   * a breathing glow with a pulse looping from -> to until release(). Refcounted
+   * — parallel lanes over the same link stack.
+   */
+  private holdLink(fromId: string, toId: string): void {
+    const i = this.edgeIndex(fromId, toId);
+    if (i < 0) return;
+    this.edgeHold[i]++;
+    this.edgeBoost[i] = 1;
+    this.edgeDecay[i] = 1.6;
+    this.edgeBoostDir[i] = this.edges[i].synapse.source === fromId ? 1 : -1;
+    this.edgeFlashColor[i] = null;
+    const e = this.edges[i].synapse;
+    this.widthMul[i] = linkWidthMul(linkKey(e.source, e.target, e.kind));
+  }
+
+  /** Release one hold on the synapse; its glow decays out naturally. */
+  private releaseLink(fromId: string, toId: string): void {
+    const i = this.edgeIndex(fromId, toId);
+    if (i >= 0) this.edgeHold[i] = Math.max(0, this.edgeHold[i] - 1);
   }
 
   private updateGlow(dt: number, t: number): void {
@@ -770,12 +827,20 @@ export class Brain2D {
 
   // ---------- spotlight ----------
 
-  private activeEdgesFor(visible: Set<string>, anyEnd: boolean): Set<number> {
+  /** Edges with BOTH endpoints in the set (search: ties inside the result). */
+  private activeEdgesFor(visible: Set<string>): Set<number> {
     const set = new Set<number>();
     this.edges.forEach((e, i) => {
-      const a = visible.has(e.synapse.source);
-      const b = visible.has(e.synapse.target);
-      if (anyEnd ? a || b : a && b) set.add(i);
+      if (visible.has(e.synapse.source) && visible.has(e.synapse.target)) set.add(i);
+    });
+    return set;
+  }
+
+  /** Edges incident to one neuron — first-degree only, no neighbour-to-neighbour ties. */
+  private edgesTouching(id: string): Set<number> {
+    const set = new Set<number>();
+    this.edges.forEach((e, i) => {
+      if (e.synapse.source === id || e.synapse.target === id) set.add(i);
     });
     return set;
   }
@@ -790,13 +855,13 @@ export class Brain2D {
 
     if (this.focusId) {
       visible = this.neighboursOf(this.focusId);
-      active = this.activeEdgesFor(visible, true);
+      active = this.edgesTouching(this.focusId);
     } else if (this.searchSet) {
       visible = this.searchSet;
-      active = this.activeEdgesFor(visible, false);
+      active = this.activeEdgesFor(visible);
     } else if (this.hoveredId) {
       visible = this.neighboursOf(this.hoveredId);
-      active = this.activeEdgesFor(visible, true);
+      active = this.edgesTouching(this.hoveredId);
     }
 
     this.starAlpha = this.stars.map((st) => {
@@ -850,8 +915,14 @@ export class Brain2D {
     this.updateGlow(dt, t);
     let flashing = false;
     for (let i = 0; i < this.edgeBoost.length; i++) {
+      if (this.edgeHold[i] > 0) {
+        // Held (a subagent runs): the launch flash decays into a breathing floor.
+        this.edgeBoost[i] = Math.max(this.edgeBoost[i] * Math.exp(-dt * this.edgeDecay[i]), 0.6 + 0.12 * Math.sin(t * 3));
+        flashing = true;
+        continue;
+      }
       if (this.edgeBoost[i] <= 0.01) continue;
-      this.edgeBoost[i] *= Math.exp(-dt * 1.6);
+      this.edgeBoost[i] *= Math.exp(-dt * this.edgeDecay[i]);
       if (this.edgeBoost[i] <= 0.01) {
         this.edgeBoost[i] = 0;
         this.edgeFlashColor[i] = null;
@@ -938,7 +1009,9 @@ export class Brain2D {
       const boost = this.edgeBoost[i];
       if (boost <= 0.01) continue;
       const e = this.edges[i];
-      const along = 1 - boost;
+      // Held: the pulse loops continuously toward the subagent; otherwise it
+      // rides the decaying flash across once.
+      const along = this.edgeHold[i] > 0 ? (t * 0.45) % 1 : 1 - boost;
       const f = this.edgeBoostDir[i] >= 0 ? along : 1 - along;
       const u = 1 - f;
       const px = u * u * e.ax + 2 * u * f * e.cx + f * f * e.bx;

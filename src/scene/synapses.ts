@@ -34,7 +34,13 @@ interface Edge {
 export interface FlashOpts {
   /** Override the flash tint (e.g. red for an errored tool result). */
   color?: number | Color;
+  /** Exponential decay rate; lower lives longer. Default 1.6 (≈3 s visible). */
+  decay?: number;
 }
+
+const DEFAULT_FLASH_DECAY = 1.6;
+/** Sustained-hold brightness: bright enough to read as "active", below a fresh flash. */
+const HOLD_LEVEL = 0.6;
 
 /**
  * All synapses as one fat-line draw plus a pulse layer.
@@ -62,6 +68,10 @@ export class SynapseField {
 
   /** Execution flash per edge (decays each frame). */
   private boosts!: Float32Array;
+  /** Per-edge flash decay rate (set by the flash that lit it). */
+  private flashDecay!: Float32Array;
+  /** Sustained-hold refcount per edge (a subagent running); pulses until released. */
+  private holds!: Float32Array;
   /** Flash travel direction: 1 = along the synapse, -1 = reversed. */
   private flashDir!: Float32Array;
   /** Per-flash tint override; null = the edge's resting colour. */
@@ -181,6 +191,8 @@ export class SynapseField {
     );
 
     this.boosts = new Float32Array(this.edges.length);
+    this.flashDecay = new Float32Array(this.edges.length).fill(DEFAULT_FLASH_DECAY);
+    this.holds = new Float32Array(this.edges.length);
     this.flashDir = new Float32Array(this.edges.length);
     this.flashColor = new Array(this.edges.length).fill(null);
     // Bake the accumulated usage heatmap into resting link widths.
@@ -282,23 +294,50 @@ export class SynapseField {
     this.pulseColors.needsUpdate = true;
   }
 
+  private edgeIndex(fromId: string, toId: string): number {
+    return this.edges.findIndex(
+      (e) =>
+        (e.synapse.source === fromId && e.synapse.target === toId) ||
+        (e.synapse.source === toId && e.synapse.target === fromId),
+    );
+  }
+
   /**
    * Flash the synapse between two neurons; the pulse travels from -> to.
    * `opts.color` overrides the tint (e.g. red for an errored tool result).
    */
   flash(fromId: string, toId: string, opts: FlashOpts = {}): void {
-    const i = this.edges.findIndex(
-      (e) =>
-        (e.synapse.source === fromId && e.synapse.target === toId) ||
-        (e.synapse.source === toId && e.synapse.target === fromId),
-    );
+    const i = this.edgeIndex(fromId, toId);
     if (i < 0) return;
     this.boosts[i] = 1;
+    this.flashDecay[i] = opts.decay ?? DEFAULT_FLASH_DECAY;
     // The pulse travels from the acting end toward the other.
     this.flashDir[i] = this.edges[i].synapse.source === fromId ? 1 : -1;
     this.flashColor[i] = opts.color != null ? new Color(opts.color) : null;
     // Fresh traffic may have just bumped this link's heat — refresh its width.
     this.applyWidth(i);
+  }
+
+  /**
+   * Hold the synapse lit (a subagent is running): the launch flash decays into
+   * a breathing glow with a pulse looping from -> to until release(). Refcounted
+   * — parallel lanes over the same link stack.
+   */
+  hold(fromId: string, toId: string): void {
+    const i = this.edgeIndex(fromId, toId);
+    if (i < 0) return;
+    this.holds[i]++;
+    this.boosts[i] = 1;
+    this.flashDecay[i] = DEFAULT_FLASH_DECAY;
+    this.flashDir[i] = this.edges[i].synapse.source === fromId ? 1 : -1;
+    this.flashColor[i] = null;
+    this.applyWidth(i);
+  }
+
+  /** Release one hold on the synapse; its glow decays out naturally. */
+  release(fromId: string, toId: string): void {
+    const i = this.edgeIndex(fromId, toId);
+    if (i >= 0) this.holds[i] = Math.max(0, this.holds[i] - 1);
   }
 
   /** Decay execution flashes and move their pulses. Cheap; call every frame. */
@@ -312,15 +351,26 @@ export class SynapseField {
     const pp = this.pulsePos.array as Float32Array;
     let touched = false;
     for (let i = 0; i < this.boosts.length; i++) {
-      if (this.boosts[i] <= 0.01) continue;
-      this.boosts[i] *= Math.exp(-dt * 1.6);
-      if (this.boosts[i] <= 0.01) {
-        this.boosts[i] = 0;
-        this.flashColor[i] = null;
+      const held = this.holds[i] > 0;
+      if (!held && this.boosts[i] <= 0.01) continue;
+      if (held) {
+        // The launch flash decays into a breathing floor until released.
+        this.boosts[i] = Math.max(
+          this.boosts[i] * Math.exp(-dt * this.flashDecay[i]),
+          HOLD_LEVEL + 0.12 * Math.sin(time * 3),
+        );
+      } else {
+        this.boosts[i] *= Math.exp(-dt * this.flashDecay[i]);
+        if (this.boosts[i] <= 0.01) {
+          this.boosts[i] = 0;
+          this.flashColor[i] = null;
+        }
       }
       this.writeEdge(i, this.restingM(i));
 
-      const along = 1 - this.boosts[i];
+      // Held: the pulse loops continuously toward the subagent; otherwise it
+      // rides the decaying flash across once.
+      const along = held ? (time * 0.45) % 1 : 1 - this.boosts[i];
       const f = this.flashDir[i] >= 0 ? along : 1 - along;
       const x = f * SEG;
       const j = Math.min(SEG - 1, Math.floor(x));

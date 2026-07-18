@@ -84,6 +84,16 @@ interface RawEvent {
   };
 }
 
+/**
+ * FLUJO's edge-routing "tools": the model picks its next node by calling
+ * handoff / handoff_to_<target>. Pure control flow inside a behaviour — never
+ * an ability call, so the neuron view doesn't surface them. (A handoff onto a
+ * subflow node still shows up: the child run emits subflow:start itself.)
+ */
+function isHandoffTool(name: string): boolean {
+  return name === 'handoff' || name.startsWith('handoff_to_');
+}
+
 /** Flatten OpenAI-style message content (string or text-part array) to plain text. */
 function textOf(content: unknown): string {
   if (typeof content === 'string') return content.trim();
@@ -122,6 +132,16 @@ export class ExecutionWatcher {
    * this set keeps each call from flashing twice.
    */
   private seenTools = new Map<string, Set<string>>();
+  /**
+   * Subflow-node ids (per conversation) whose child run was VISIBLE on the
+   * stream (a subflow:start arrived). After the child finishes, the parent
+   * folds the child's final text into its own transcript as an assistant
+   * message attributed to that node — a duplicate of the final message the
+   * child already emitted (shown on the subagent neuron), so it's suppressed.
+   * In final-only output mode no subflow:start is forwarded, the node is never
+   * marked, and the folded copy stays visible — it's the run's only trace.
+   */
+  private subflowNodes = new Map<string, Set<string>>();
   private timer: ReturnType<typeof setInterval> | null = null;
   private inFlight = false;
 
@@ -201,6 +221,7 @@ export class ExecutionWatcher {
     if (terminal) {
       this.seenMsgs.delete(id);
       this.seenTools.delete(id);
+      this.subflowNodes.delete(id);
     }
   }
 
@@ -239,6 +260,12 @@ export class ExecutionWatcher {
       case 'subflow:start':
         stack[depth + 1] = ev.subflowId ?? null;
         stack.length = depth + 2;
+        // The child run is visible — its folded final message (attributed to
+        // this subflow node) will be a duplicate; remember to suppress it.
+        if (ev.node?.nodeId) {
+          if (!this.subflowNodes.has(id)) this.subflowNodes.set(id, new Set());
+          this.subflowNodes.get(id)!.add(ev.node.nodeId);
+        }
         this.onEvent({
           kind: 'subflow-start',
           conversationId: id,
@@ -265,10 +292,12 @@ export class ExecutionWatcher {
         this.onEvent({ kind: 'node-exit', conversationId: id, flowId: flowAt(depth), node: ev.node });
         break;
       case 'tool:call':
+        if (ev.name && isHandoffTool(ev.name)) break;
         if (ev.toolCallId && !this.freshTool(id, ev.toolCallId)) break;
         this.onEvent({ kind: 'tool-call', conversationId: id, flowId: flowAt(depth), node: ev.node, toolName: ev.name });
         break;
       case 'tool:result':
+        if (ev.name && isHandoffTool(ev.name)) break;
         // The tool's reply travelling back to the behaviour. Fires once per
         // call (no dedupe needed); isError drives the red return flash.
         this.onEvent({
@@ -306,9 +335,12 @@ export class ExecutionWatcher {
         if (m?.role !== 'assistant') break;
         for (const [i, tc] of (m.tool_calls ?? []).entries()) {
           const name = tc.function?.name;
-          if (!name || !this.freshTool(id, tc.id ?? `${m.id ?? ev.seq}:${i}`)) continue;
+          if (!name || isHandoffTool(name) || !this.freshTool(id, tc.id ?? `${m.id ?? ev.seq}:${i}`)) continue;
           this.onEvent({ kind: 'tool-call', conversationId: id, flowId: flowAt(depth), node: ev.node, toolName: name });
         }
+        // The parent's folded copy of a visible child run's final message —
+        // the child already surfaced it on the subagent neuron.
+        if (ev.node?.nodeId && this.subflowNodes.get(id)?.has(ev.node.nodeId)) break;
         const text = textOf(m.content);
         if (!text) break;
         const mid = m.id ?? `${id}:${ev.seq}`;

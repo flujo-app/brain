@@ -62,6 +62,8 @@ export class Brain {
   private glow = new Map<string, number>();
   /** conversationId -> behaviours currently executing in it. */
   private convFlows = new Map<string, Set<string>>();
+  /** conversationId -> caller→subagent links held lit while the child runs. */
+  private heldLinks = new Map<string, Array<[string, string]>>();
   private followExec = true;
   private hudActivity: { flowId: string | null; detail?: string } | null = null;
   /** Chat output floating above the behaviour that produced it. */
@@ -171,6 +173,8 @@ export class Brain {
   setGraph(graph: BrainGraph): void {
     const hadFocus = this.focusId;
     this.graph = graph;
+    // The rebuilt SynapseField starts with no holds — drop the bookkeeping too.
+    this.heldLinks.clear();
     this.focusId = null;
     this.searchSet = null;
     this.hoveredId = null;
@@ -437,14 +441,28 @@ export class Brain {
       case 'subflow-start':
         if (e.flowId && e.subflowId) {
           fireLink(e.flowId, e.subflowId, 'subflow');
-          this.synapses.flash(e.flowId, e.subflowId);
+          // The handoff keeps the caller<>subagent link lit until the child
+          // finishes (subflow-done / run-done releases it).
+          this.synapses.hold(e.flowId, e.subflowId);
+          if (!this.heldLinks.has(e.conversationId)) this.heldLinks.set(e.conversationId, []);
+          this.heldLinks.get(e.conversationId)!.push([e.flowId, e.subflowId]);
         }
         this.touchFlow(e.conversationId, e.subflowId ?? null);
         this.hudActivity = { flowId: e.subflowId ?? e.flowId };
         this.followTo(e.subflowId ?? null);
         break;
       case 'subflow-done':
-        if (e.subflowId) this.convFlows.get(e.conversationId)?.delete(e.subflowId);
+        if (e.subflowId) {
+          this.convFlows.get(e.conversationId)?.delete(e.subflowId);
+          if (e.flowId) {
+            this.synapses.release(e.flowId, e.subflowId);
+            const held = this.heldLinks.get(e.conversationId);
+            const idx = held?.findIndex(([a, b]) => a === e.flowId && b === e.subflowId) ?? -1;
+            if (held && idx >= 0) held.splice(idx, 1);
+            // The result travelling back to the caller.
+            this.synapses.flash(e.subflowId, e.flowId);
+          }
+        }
         this.hudActivity = { flowId: e.flowId };
         break;
       case 'node-enter':
@@ -463,7 +481,8 @@ export class Brain {
           fireNeuron(ability.id);
           if (e.flowId) {
             fireLink(e.flowId, ability.id, 'server');
-            this.synapses.flash(e.flowId, ability.id);
+            // Half decay = the ability link stays lit twice as long.
+            this.synapses.flash(e.flowId, ability.id, { decay: 0.8 });
           }
         }
         if (e.toolName) {
@@ -480,7 +499,7 @@ export class Brain {
         // the reverse direction, burning red when the tool errored.
         const ability = abilityForTool(this.graph, e.toolName);
         if (ability && e.flowId) {
-          this.synapses.flash(ability.id, e.flowId, e.isError ? { color: SYNAPSE_ERROR } : undefined);
+          this.synapses.flash(ability.id, e.flowId, e.isError ? { color: SYNAPSE_ERROR, decay: 0.8 } : { decay: 0.8 });
         }
         break;
       }
@@ -517,6 +536,9 @@ export class Brain {
         break;
       case 'run-done':
         this.convFlows.delete(e.conversationId);
+        // A dropped subflow-done can't strand a held link past its run.
+        for (const [a, b] of this.heldLinks.get(e.conversationId) ?? []) this.synapses.release(a, b);
+        this.heldLinks.delete(e.conversationId);
         this.flowGraph?.setActive(null);
         if (!this.convFlows.size) this.hudActivity = null;
         break;
@@ -600,12 +622,20 @@ export class Brain {
     this.dirty = true;
   }
 
-  private activeEdgesFor(visible: Set<string>, requireBoth: boolean): Set<number> {
+  /** Edges with BOTH endpoints in the set (search: ties inside the result). */
+  private activeEdgesFor(visible: Set<string>): Set<number> {
     const set = new Set<number>();
     this.synapses.edges.forEach((e, i) => {
-      const a = visible.has(e.synapse.source);
-      const b = visible.has(e.synapse.target);
-      if (requireBoth ? a || b : a && b) set.add(i);
+      if (visible.has(e.synapse.source) && visible.has(e.synapse.target)) set.add(i);
+    });
+    return set;
+  }
+
+  /** Edges incident to one neuron — first-degree only, no neighbour-to-neighbour ties. */
+  private edgesTouching(id: string): Set<number> {
+    const set = new Set<number>();
+    this.synapses.edges.forEach((e, i) => {
+      if (e.synapse.source === id || e.synapse.target === id) set.add(i);
     });
     return set;
   }
@@ -702,13 +732,13 @@ export class Brain {
 
     if (this.focusId) {
       visible = this.neighboursOf(this.focusId);
-      active = this.activeEdgesFor(visible, true);
+      active = this.edgesTouching(this.focusId);
     } else if (this.searchSet) {
       visible = this.searchSet;
-      active = this.activeEdgesFor(visible, false);
+      active = this.activeEdgesFor(visible);
     } else if (this.hoveredId) {
       visible = this.neighboursOf(this.hoveredId);
-      active = this.activeEdgesFor(visible, true);
+      active = this.edgesTouching(this.hoveredId);
     }
 
     // A focused ability has no flow graph — treat it like a bright hover
