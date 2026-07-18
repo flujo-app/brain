@@ -1,0 +1,90 @@
+# Single "brain release" pipeline — ONE event rebuilds BOTH images a hosted
+# brain depends on, so they can never drift apart:
+#
+#   flujo-browser:latest  = the TENANT runtime every brain microVM boots.
+#                           FROM the latest published FLUJO (docker/flujo-browser
+#                           Dockerfile) + system Chromium + prebaked MCP skills.
+#                           `pull: true` re-pulls the FLUJO base at build time, so
+#                           a brain release ALWAYS bakes in the newest FLUJO.
+#   brain:latest          = UI + brain-manager (root Dockerfile). brain online
+#                           COPYs its /app/ui (the neuron viewer) at its own deploy.
+#
+# DESIGN (owner's rule, deliberate):
+#   * A FLUJO release triggers NOTHING here. Only a brain release advances the
+#     FLUJO that tenants run — and THIS workflow is that release.
+#   * No path filters: both images rebuild on every release, so a change to one
+#     source tree can never leave the other image stale.
+#   * No cron: nothing advances the tenant FLUJO except an explicit brain release
+#     (a weekly cron would silently pull a newer FLUJO between releases).
+#   * The two jobs are independent (brain:latest does NOT contain flujo-browser),
+#     so they build in parallel.
+#
+# Fires on any way a release realistically happens: a push to main, a v* tag, or
+# a manual dispatch. "Claude, release and deploy brain" → push to main → both
+# images rebuild with the newest FLUJO → then brain online `fly deploy` pulls the
+# fresh brain:latest viewer, and recreated tenant machines pull the fresh
+# flujo-browser:latest.
+name: Publish brain images (release)
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+# Let a release build finish rather than aborting it mid-way; a newer release
+# queues behind it instead of cancelling.
+concurrency:
+  group: brain-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # The tenant runtime: latest FLUJO + Chromium + prebaked skills.
+  flujo-browser:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: docker/flujo-browser
+          push: true
+          # Re-pull the FLUJO base (ghcr.io/mario-andreschak/flujo:latest) so the
+          # newest FLUJO is baked in — this is what makes a brain release "pull in
+          # the latest FLUJO". (Base must be PUBLIC or the flujo-app token can't
+          # pull it.)
+          pull: true
+          tags: ghcr.io/${{ github.repository_owner }}/flujo-browser:latest
+
+  # The viewer + manager image brain online consumes at deploy.
+  brain:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          pull: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/brain:latest
+            ghcr.io/${{ github.repository_owner }}/brain:${{ github.sha }}

@@ -1,6 +1,6 @@
 {
   "name": "flujo-brain",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "A WebGL brain that visualizes FLUJO flows as neurons and their relationships as synapses.",
   "type": "module",
   "scripts": {
