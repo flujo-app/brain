@@ -51,9 +51,29 @@ RUN npm install -g @playwright/mcp mcp-server-commands \
 # venv and a global bin (mcp-server-fetch) without touching the system python.
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends python3 python3-pip python3-venv pipx git \
+    && apt-get install -y --no-install-recommends python3 python3-pip python3-venv pipx git curl ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
     && PIPX_HOME=/opt/pipx PIPX_BIN_DIR=/usr/local/bin pipx install mcp-server-fetch
+
+# The GitHub CLI, pinned to a release binary (no apt repo, no extra keyring to
+# rot). Tenants get their PAT injected as GH_TOKEN/GITHUB_TOKEN, which gh picks
+# up with zero on-disk auth state — so `gh release create`, `gh api` and
+# `gh auth git-credential` all work in a fresh container without `gh auth login`.
+# Arch comes from dpkg so the same line builds on amd64 and arm64 hosts; the
+# checksums file from the same release is verified before unpacking.
+ARG GH_VERSION=2.96.0
+RUN set -eux; \
+    arch="$(dpkg --print-architecture)"; \
+    tarball="gh_${GH_VERSION}_linux_${arch}.tar.gz"; \
+    base="https://github.com/cli/cli/releases/download/v${GH_VERSION}"; \
+    cd /tmp; \
+    curl -fsSLO "${base}/${tarball}"; \
+    curl -fsSLO "${base}/gh_${GH_VERSION}_checksums.txt"; \
+    grep " ${tarball}\$" "gh_${GH_VERSION}_checksums.txt" | sha256sum -c -; \
+    tar -xzf "${tarball}"; \
+    install -m 0755 "gh_${GH_VERSION}_linux_${arch}/bin/gh" /usr/local/bin/gh; \
+    rm -rf /tmp/gh_*; \
+    gh --version
 
 ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 \
     BRAIN_BROWSER_EXECUTABLE=/usr/bin/chromium
