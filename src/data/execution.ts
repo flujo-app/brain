@@ -1,14 +1,24 @@
 import { flujoBase } from './loader';
 
 /**
- * Live execution awareness: watches the FLUJO instance for running
- * conversations and subscribes to their SSE event streams, so the brain can
- * see itself think (which behaviour runs, which node is active, subflow
- * hand-offs, tool calls).
+ * Live execution awareness: watches the FLUJO instance so the brain can see
+ * itself think (which behaviour runs, which node is active, subflow hand-offs,
+ * tool calls).
  *
- * FLUJO forwards a subflow child's events onto the PARENT conversation's
- * channel with depth+1, so we keep a per-conversation stack of flow ids
- * indexed by depth to attribute node events to the right behaviour.
+ * Transport: a SINGLE connection to the global firehose (/v1/chat/events),
+ * which streams execution events for EVERY conversation at once. This replaces
+ * the old one-EventSource-per-conversation model, which hit the browser's
+ * ~6-per-origin connection cap the moment several subflows ran in parallel —
+ * starving (and never delivering) the deeper workers' tool calls. Every frame
+ * carries its own conversationId, so all per-conversation state below is keyed
+ * by it exactly as before.
+ *
+ * Attribution: events arrive two ways depending on a subflow node's output
+ * mode. In 'steps' mode a child's events are forwarded onto the PARENT
+ * conversation with depth+1 (hence the per-conversation depth stack). In
+ * 'final-only' / separate-conversation mode each child runs as its OWN
+ * conversation with its own run:start/flowId — the firehose delivers those
+ * directly, which is why a single connection now sees them at all.
  */
 
 export interface NodeRef {
@@ -107,11 +117,19 @@ function textOf(content: unknown): string {
 }
 
 export class ExecutionWatcher {
-  private subs = new Map<string, EventSource>();
+  /** The single firehose connection to /v1/chat/events (all conversations). */
+  private es: EventSource | null = null;
   /** conversation -> flow id per subflow depth (index 0 = top-level run). */
   private stacks = new Map<string, Array<string | null>>();
-  /** Last seen event seq per conversation, for ?fromSeq resume without replay. */
-  private seenSeq = new Map<string, number>();
+  /**
+   * conversationId -> flow id, from the light conversations poll. Used to seed
+   * the depth stack of a conversation that was ALREADY running when we
+   * connected — its run:start won't replay on the live firehose, so without
+   * this its events would attribute to no behaviour.
+   */
+  private flowIdOf = new Map<string, string>();
+  /** Highest firehose globalSeq seen, for ?fromSeq resume on manual reconnect. */
+  private lastGlobalSeq = -1;
   /**
    * Message ids already surfaced per conversation. FLUJO emits a live copy
    * mid-loop AND the persisted copy at end-of-run under the same id — the
@@ -152,6 +170,7 @@ export class ExecutionWatcher {
 
   start(): void {
     if (this.timer) return;
+    this.connect();
     void this.tick();
     this.timer = setInterval(() => void this.tick(), this.pollMs);
   }
@@ -159,14 +178,21 @@ export class ExecutionWatcher {
   stop(): void {
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
-    for (const es of this.subs.values()) es.close();
-    this.subs.clear();
+    this.es?.close();
+    this.es = null;
   }
 
+  /**
+   * Light poll of the conversations list — ONLY to keep the conversationId ->
+   * flowId cache warm for seeding (see `flowIdOf`). No per-conversation SSE is
+   * opened here anymore; the firehose is the single event source. Also (re)opens
+   * the firehose if it isn't connected yet (e.g. FLUJO wasn't reachable at start).
+   */
   private async tick(): Promise<void> {
     if (this.inFlight || document.hidden) return;
     const base = flujoBase();
     if (!base) return;
+    if (!this.es) this.connect();
     this.inFlight = true;
     try {
       const res = await fetch(`${base}/v1/chat/conversations`);
@@ -174,7 +200,7 @@ export class ExecutionWatcher {
       const list = (await res.json()) as ConversationListItem[];
       if (!Array.isArray(list)) return;
       for (const c of list) {
-        if (c?.id && c.status === 'running' && !this.subs.has(c.id)) this.subscribe(base, c);
+        if (c?.id && c.flowId) this.flowIdOf.set(c.id, c.flowId);
       }
     } catch {
       // FLUJO temporarily unreachable — next tick retries.
@@ -183,17 +209,18 @@ export class ExecutionWatcher {
     }
   }
 
-  private subscribe(base: string, conv: ConversationListItem): void {
-    const id = conv.id;
-    // Seed depth 0 from the listing so mid-run attachment attributes correctly
-    // even before (or without) a replayed run:start.
-    this.stacks.set(id, [conv.flowId ?? null]);
+  /** Open (or reopen) the single firehose connection. No-op if FLUJO isn't
+   *  reachable yet (a later tick retries) or a connection already exists. */
+  private connect(): void {
+    const base = flujoBase();
+    if (!base || this.es) return;
 
     // fromSeq is inclusive server-side — resume just past the last seen event.
-    const from = this.seenSeq.get(id);
-    const url = `${base}/v1/chat/conversations/${encodeURIComponent(id)}/events${from !== undefined ? `?fromSeq=${from + 1}` : ''}`;
+    // Absent on the very first connect, so the stream just goes live.
+    const from = this.lastGlobalSeq;
+    const url = `${base}/v1/chat/events${from >= 0 ? `?fromSeq=${from + 1}` : ''}`;
     const es = new EventSource(url);
-    this.subs.set(id, es);
+    this.es = es;
 
     es.onmessage = (msg) => {
       let ev: RawEvent;
@@ -202,27 +229,36 @@ export class ExecutionWatcher {
       } catch {
         return;
       }
-      if (typeof ev.seq === 'number') this.seenSeq.set(id, Math.max(ev.seq, this.seenSeq.get(id) ?? 0));
+      const id = ev.conversationId;
+      if (!id) return;
+      // The SSE `id` is the firehose globalSeq (the browser also echoes it as
+      // Last-Event-ID on auto-reconnect); track it for manual reconnect too.
+      const gid = msg.lastEventId ? parseInt(msg.lastEventId, 10) : NaN;
+      if (!Number.isNaN(gid)) this.lastGlobalSeq = Math.max(gid, this.lastGlobalSeq);
+      // Seed depth 0 for a conversation first seen mid-run (no replayed
+      // run:start): prefer the event's own flowId, else the polled cache.
+      if (!this.stacks.has(id)) this.stacks.set(id, [ev.flowId ?? this.flowIdOf.get(id) ?? null]);
       this.dispatch(id, ev);
-      if (ev.type === 'run:done') this.drop(id, true);
+      if (ev.type === 'run:done') this.drop(id);
     };
     es.onerror = () => {
-      // EventSource reconnects on its own; only clean up once it gave up.
-      if (es.readyState === EventSource.CLOSED) this.drop(id);
+      // EventSource auto-reconnects (resuming via Last-Event-ID). Only recreate
+      // manually once it has fully given up, resuming from lastGlobalSeq.
+      if (es.readyState === EventSource.CLOSED) {
+        this.es = null;
+        this.connect();
+      }
     };
   }
 
-  /** `terminal` = the run finished; transport drops keep the message dedupe
-   *  set so a later resubscribe's replay can't re-bubble old messages. */
-  private drop(id: string, terminal = false): void {
-    this.subs.get(id)?.close();
-    this.subs.delete(id);
+  /** A conversation's run finished — clear its per-conversation state. Resume
+   *  is by monotonic globalSeq, so cleared state can never be re-bubbled by a
+   *  reconnect replay (it only ever delivers events newer than lastGlobalSeq). */
+  private drop(id: string): void {
     this.stacks.delete(id);
-    if (terminal) {
-      this.seenMsgs.delete(id);
-      this.seenTools.delete(id);
-      this.subflowNodes.delete(id);
-    }
+    this.seenMsgs.delete(id);
+    this.seenTools.delete(id);
+    this.subflowNodes.delete(id);
   }
 
   /** Mark a tool-call id as surfaced; false if it already was. */
