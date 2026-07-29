@@ -24,7 +24,7 @@ import { PresenceOrb } from './presenceOrb';
  *
  * The 🕘 button hands off to the graphical history view; the dock also watches
  * vitals (/api/planned-executions) to offer a brain-stem / heartbeat when one
- * is missing, and starts a heartbeat-less mind paused.
+ * is missing. FLUJO remains authoritative for the scheduler's pause state.
  */
 
 interface ToolCall {
@@ -164,8 +164,6 @@ export class AiDock {
 
   /** Dock revealed once FLUJO first answered. */
   private started = false;
-  /** The one-time "adopted minds start paused" has run. */
-  private bootPauseDone = false;
   private vitalsBusy = false;
   private setupKind: SetupKind = 'none';
   /** A grow request is in flight — keep its progress UI alive. */
@@ -721,23 +719,6 @@ export class AiDock {
         this.pause.paused = data.paused;
         this.setPauseUi();
         this.updateOrb();
-      }
-
-      // A mind without a heartbeat starts paused: nothing scheduled fires
-      // until the user consciously presses resume.
-      if (!heartbeat && !this.bootPauseDone) {
-        this.bootPauseDone = true;
-        if (!data.paused) {
-          await fetch(`${base}/api/planned-executions`, {
-            method: 'PATCH',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ paused: true }),
-          }).catch(() => undefined);
-          this.pause.paused = true;
-          this.setPauseUi();
-          this.updateOrb();
-          this.note('started paused — this brain has no heartbeat yet. Press resume when it should run on its own.');
-        }
       }
 
       await this.renderSetup(heartbeat);

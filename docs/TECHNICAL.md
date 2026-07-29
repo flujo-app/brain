@@ -122,7 +122,7 @@ The heartbeat UI lives **in the header, unified with ⏸ pause** and always visi
 
 On every graph rebuild (plus a slow 20s poll) the dock checks the brain's vitals via `GET /api/planned-executions`:
 
-- **No enabled heartbeat for the brain-stem** → the mind **starts paused** (one-time scheduler `PATCH {paused: true}` on first contact) so nothing scheduled fires until the user consciously resumes.
+- **No enabled heartbeat for the brain-stem** → the dock offers to create one. The viewer only mirrors FLUJO's scheduler state on load/reconnect; it never changes pause state as part of discovery or restoration.
 - **Brain-stem present, heartbeat missing** → the dock asks to start one: a cron picker + one button that `POST`s the planned execution (wake prompt mirrored from `manager/src/brainstem.ts`) straight into the running FLUJO — no manager needed.
 - **No brain-stem at all** (typical for a directly adopted instance) → the dock asks to grow one *in the running instance*: name, life goal, a model already known to that FLUJO, optional heartbeat. The form `POST`s `/api/brains` (`model: {mode:'existing'}`, `adoptUrl` = the FLUJO URL, or `'default'` when reached via the same-origin proxy) and polls provisioning status. This path needs the brain-manager (it hosts the brain-stem's MCP tool belt); without it the dock says so instead of offering the form.
 
