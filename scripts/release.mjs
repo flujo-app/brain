@@ -34,7 +34,11 @@ if (branch !== 'main') fail(`Releases are cut from main (you are on '${branch}')
 if (run('git status --porcelain') !== '') fail('Working tree is not clean - commit or stash first.');
 
 console.log('Fetching origin ...');
-run('git fetch origin main --tags');
+// Tags occasionally get replaced on origin (for example, when a failed release
+// is re-cut). A normal fetch refuses to overwrite the stale local tag and blocks
+// every later release. Origin is authoritative for published release tags, so
+// allow tag refs to be refreshed while fetching the branch.
+run('git fetch origin main "+refs/tags/*:refs/tags/*"');
 if (run('git rev-parse main') !== run('git rev-parse origin/main')) {
   fail('main and origin/main differ - pull/push first so the release builds exactly what is on GitHub.');
 }
