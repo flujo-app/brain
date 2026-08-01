@@ -54,16 +54,35 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Resolve and verify published FLUJO image
+        id: flujo
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(npm view flujo-ai version --silent)"
+          test -n "$version"
+          # Fail instead of silently baking an older `latest`. FLUJO's release
+          # publishes this immutable version tag only after its image checks pass.
+          docker buildx imagetools inspect \
+            "ghcr.io/mario-andreschak/flujo:${version}" >/dev/null
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
       - uses: docker/build-push-action@v6
         with:
           context: docker/flujo-browser
           push: true
-          # Re-pull the FLUJO base (ghcr.io/mario-andreschak/flujo:latest) so the
-          # newest FLUJO is baked in — this is what makes a brain release "pull in
-          # the latest FLUJO". (Base must be PUBLIC or the flujo-app token can't
-          # pull it.)
+          # Pin the newest npm release's matching immutable container tag. If
+          # FLUJO's image publication failed, the verification step above fails
+          # this workflow rather than quietly rebuilding an older runtime.
           pull: true
-          tags: ghcr.io/${{ github.repository_owner }}/flujo-browser:latest
+          build-args: |
+            FLUJO_IMAGE=ghcr.io/mario-andreschak/flujo:${{ steps.flujo.outputs.version }}
+            FLUJO_VERSION=${{ steps.flujo.outputs.version }}
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/flujo-browser:latest
+            ghcr.io/${{ github.repository_owner }}/flujo-browser:${{ steps.flujo.outputs.version }}
 
   # The viewer + manager image brain online consumes at deploy.
   brain:

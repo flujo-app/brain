@@ -19,6 +19,27 @@ import { readFileSync } from 'node:fs';
 const run = (cmd) => execSync(cmd, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 const show = (cmd) => { console.log(`\n> ${cmd}`); execSync(cmd, { stdio: 'inherit' }); };
 const fail = (msg) => { console.error(`\nx ${msg}`); process.exit(1); };
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const githubRepo = 'flujo-app/brain';
+
+async function waitForWorkflow(workflow, branch, label) {
+  console.log(`\nWaiting for ${label} ...`);
+  let runId = '';
+  for (let i = 0; i < 24 && !runId; i += 1) {
+    try {
+      runId = run(
+        `gh run list -R ${githubRepo} --workflow=${workflow} --branch ${branch} --event push --limit 1 --json databaseId --jq ".[0].databaseId"`,
+      );
+    } catch { /* run not visible yet */ }
+    if (!runId) await sleep(5000);
+  }
+  if (!runId) fail(`${label} did not appear; inspect https://github.com/${githubRepo}/actions.`);
+  try {
+    show(`gh run watch ${runId} -R ${githubRepo} --exit-status`);
+  } catch {
+    fail(`${label} failed: https://github.com/${githubRepo}/actions/runs/${runId}`);
+  }
+}
 
 const args = process.argv.slice(2);
 const dryRun = args.includes('--dry-run');
@@ -43,11 +64,20 @@ if (run('git rev-parse main') !== run('git rev-parse origin/main')) {
   fail('main and origin/main differ - pull/push first so the release builds exactly what is on GitHub.');
 }
 
+if (spawnSync('gh', ['--version'], { shell: true, stdio: 'ignore' }).status !== 0) {
+  fail('GitHub CLI is required so release cannot report success before its images exist. Install and authenticate `gh`.');
+}
+try {
+  run('gh auth status');
+} catch {
+  fail('GitHub CLI authentication failed; run `gh auth login`.');
+}
+
 const current = JSON.parse(readFileSync('package.json', 'utf8')).version;
 console.log(`Current version: ${current}`);
 
 if (dryRun) {
-  console.log(`\nDry run - preflight passed. Would run: npm version ${bump}, git push origin main --follow-tags, then watch CI.`);
+  console.log(`\nDry run - preflight passed. Would run: npm version ${bump}, push main and the tag, then wait for both image and installer CI.`);
   process.exit(0);
 }
 
@@ -57,23 +87,9 @@ const version = JSON.parse(readFileSync('package.json', 'utf8')).version;
 const tag = `v${version}`;
 show('git push origin main --follow-tags');
 
-// --- watch CI (optional, needs the GitHub CLI) ---------------------------------
-if (spawnSync('gh', ['--version'], { shell: true, stdio: 'ignore' }).status !== 0) {
-  console.log(`\nPushed ${tag}. Install the GitHub CLI (gh) to watch the build from here; meanwhile:`);
-  console.log('    https://github.com/flujo-app/brain/actions');
-  process.exit(0);
-}
-
-console.log(`\nWaiting for the "Build setup.exe" run for ${tag} ...`);
-let runId = '';
-for (let i = 0; i < 12 && !runId; i++) {
-  try {
-    // For tag pushes the run's head branch is the tag name.
-    runId = run(`gh run list --workflow=installer.yml --branch ${tag} --limit 1 --json databaseId --jq ".[0].databaseId"`);
-  } catch { /* run not visible yet */ }
-  if (!runId) await new Promise((r) => setTimeout(r, 5000));
-}
-if (!runId) fail(`No CI run appeared for ${tag} - check https://github.com/flujo-app/brain/actions`);
-
-show(`gh run watch ${runId} --exit-status`);
+// The tag event has its own image workflow run even though pushing main also
+// starts one. Waiting for the tag-scoped run guarantees both `brain:latest` and
+// `flujo-browser:latest` exist before this command reports success.
+await waitForWorkflow('brain-release.yml', tag, `the ${tag} brain image build`);
+await waitForWorkflow('installer.yml', tag, `the ${tag} Windows installer build`);
 console.log(`\nReleased ${tag}: https://github.com/flujo-app/brain/releases/tag/${tag}`);

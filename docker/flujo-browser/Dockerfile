@@ -17,6 +17,9 @@
 ARG FLUJO_IMAGE=ghcr.io/mario-andreschak/flujo:latest
 FROM ${FLUJO_IMAGE}
 
+ARG FLUJO_VERSION=unknown
+LABEL io.flujo.version="${FLUJO_VERSION}"
+
 USER root
 
 RUN apt-get update \
