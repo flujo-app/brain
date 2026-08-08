@@ -31,6 +31,15 @@ on:
     branches: [main]
     tags: ['v*']
   workflow_dispatch:
+    inputs:
+      historical_flujo_image:
+        description: Exact FLUJO image reference for an isolated historical test build
+        required: false
+        type: string
+      historical_tag:
+        description: Non-latest flujo-browser tag used only by the historical test build
+        required: false
+        type: string
 
 # Let a release build finish rather than aborting it mid-way; a newer release
 # queues behind it instead of cancelling.
@@ -59,14 +68,22 @@ jobs:
       - name: Resolve and verify published FLUJO image
         id: flujo
         shell: bash
+        env:
+          HISTORICAL_FLUJO_IMAGE: ${{ inputs.historical_flujo_image }}
+          HISTORICAL_TAG: ${{ inputs.historical_tag }}
         run: |
           set -euo pipefail
-          version="$(npm view flujo-ai version --silent)"
-          test -n "$version"
-          # Fail instead of silently baking an older `latest`. FLUJO's release
-          # publishes this immutable version tag only after its image checks pass.
-          docker buildx imagetools inspect \
-            "ghcr.io/mario-andreschak/flujo:${version}" >/dev/null
+          if [[ -n "$HISTORICAL_FLUJO_IMAGE" ]]; then
+            test -n "$HISTORICAL_TAG"
+            image="$HISTORICAL_FLUJO_IMAGE"
+            version="$HISTORICAL_TAG"
+          else
+            version="$(npm view flujo-ai version --silent)"
+            test -n "$version"
+            image="ghcr.io/mario-andreschak/flujo:${version}"
+          fi
+          docker buildx imagetools inspect "$image" >/dev/null
+          echo "image=${image}" >> "$GITHUB_OUTPUT"
           echo "version=${version}" >> "$GITHUB_OUTPUT"
 
       - uses: docker/build-push-action@v6
@@ -78,14 +95,14 @@ jobs:
           # this workflow rather than quietly rebuilding an older runtime.
           pull: true
           build-args: |
-            FLUJO_IMAGE=ghcr.io/mario-andreschak/flujo:${{ steps.flujo.outputs.version }}
+            FLUJO_IMAGE=${{ steps.flujo.outputs.image }}
             FLUJO_VERSION=${{ steps.flujo.outputs.version }}
           tags: |
-            ghcr.io/${{ github.repository_owner }}/flujo-browser:latest
             ghcr.io/${{ github.repository_owner }}/flujo-browser:${{ steps.flujo.outputs.version }}
 
   # The viewer + manager image brain online consumes at deploy.
   brain:
+    if: ${{ inputs.historical_flujo_image == '' }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
