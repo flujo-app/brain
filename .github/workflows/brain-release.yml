@@ -100,6 +100,16 @@ jobs:
           tags: |
             ghcr.io/${{ github.repository_owner }}/flujo-browser:${{ steps.flujo.outputs.version }}
 
+      # Normal releases advance the convenience tag only after the immutable
+      # FLUJO-version tag was pushed successfully. Historical test builds must
+      # never be able to replace the tenant runtime selected by `:latest`.
+      - name: Advance flujo-browser latest tag
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.historical_flujo_image == '' }}
+        run: >-
+          docker buildx imagetools create
+          --tag ghcr.io/${{ github.repository_owner }}/flujo-browser:latest
+          ghcr.io/${{ github.repository_owner }}/flujo-browser:${{ steps.flujo.outputs.version }}
+
   # The viewer + manager image brain online consumes at deploy.
   brain:
     if: ${{ inputs.historical_flujo_image == '' }}
