@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "standalone": "npm run build && npm install --prefix manager && npm run standalone --prefix manager",
     "release": "node scripts/release.mjs",
+    "test:release": "node --test test/release-arguments.test.mjs",
     "dockerbuild": "gh workflow run brain-release.yml -R flujo-app/brain --ref main"
   },
   "keywords": [

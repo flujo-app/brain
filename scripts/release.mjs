@@ -7,7 +7,7 @@
 //   npm run release minor           0.1.0 -> 0.2.0
 //   npm run release major           0.1.0 -> 1.0.0
 //   npm run release 1.2.3           exactly 1.2.3
-//   npm run release -- --dry-run    preflight checks only, changes nothing
+//   node scripts/release.mjs --dry-run    preflight only (refreshes git refs)
 //
 // Steps: preflight (on main, clean tree, in sync with origin) ->
 // `npm version` (bumps package.json + lockfile, commits, tags v<version>) ->
@@ -15,6 +15,7 @@
 
 import { execSync, spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
+import { parseReleaseArguments, releaseUsage } from './release-arguments.mjs';
 
 const run = (cmd) => execSync(cmd, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 const show = (cmd) => { console.log(`\n> ${cmd}`); execSync(cmd, { stdio: 'inherit' }); };
@@ -41,12 +42,17 @@ async function waitForWorkflow(workflow, branch, label) {
   }
 }
 
-const args = process.argv.slice(2);
-const dryRun = args.includes('--dry-run');
-const bump = args.find((a) => !a.startsWith('--')) ?? 'patch';
-if (!/^(patch|minor|major|\d+\.\d+\.\d+)$/.test(bump)) {
-  fail(`Unknown bump '${bump}' - use patch, minor, major, or an exact x.y.z version.`);
+let releaseOptions;
+try {
+  releaseOptions = parseReleaseArguments(process.argv.slice(2), process.env);
+} catch (error) {
+  fail(error.message);
 }
+if (releaseOptions.help) {
+  console.log(releaseUsage);
+  process.exit(0);
+}
+const { dryRun, bump } = releaseOptions;
 
 // --- preflight ---------------------------------------------------------------
 const branch = run('git rev-parse --abbrev-ref HEAD');
