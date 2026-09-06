@@ -1,0 +1,35 @@
+name: Release command safety
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - .github/workflows/release-safety.yml
+      - scripts/release.mjs
+      - scripts/release-arguments.mjs
+      - test/release-arguments.test.mjs
+      - test/fixtures/release-command-stubs.mjs
+      - package.json
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-safety-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  release-safety:
+    name: Release safety (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Test release commands with intercepted subprocesses
+        run: node --test test/release-arguments.test.mjs
