@@ -111,6 +111,20 @@ test('observation freshness never renews worker evidence, and terminal states do
   source.status = 'observed'; source.snapshot.snapshot.control.status = 'paused';
   assert.equal(activities(source, now).get('cell-1'), 'uncertain');
 });
+test('an unknown external outcome remains uncertain after operational completion, retirement and pause', () => {
+  const source = parseSwarm(swarmPreview()).sources[0], state = source.snapshot.snapshot;
+  const now = Date.parse(source.snapshot.observedAt), task = state.tasks[0];
+  task.status = 'completed';
+  state.cells.find(cell => cell.id === task.owner).status = 'retired';
+  state.control.status = 'paused';
+  state.effects.push({ key: 'retire-unknown', kind: 'retire', state: 'unknown', owner: task.owner,
+    taskId: task.id, scope: 'cleanup', scopeId: task.owner, ownerEpoch: 1, controlEpoch: 1,
+    createdAt: source.snapshot.observedAt, updatedAt: source.snapshot.observedAt, requestDigest: 'b'.repeat(64) });
+  assert.equal(activities(source, now).get(task.owner), 'uncertain');
+  assert.equal(state.workerQuiescence, 'unverified');
+  state.effects[0].state = 'succeeded';
+  assert.equal(activities(source, now).get(task.owner), 'idle');
+});
 test('consumer drops private extensions and fails closed on capabilities/identity/duplicate records', () => {
   const input = swarmPreview(); input.token = 'private'; input.sources[0].origin = 'private'; input.sources[0].snapshot.snapshot.tasks[2].candidate.path = 'private'; input.sources[0].snapshot.snapshot.paidBudget = { token: 'private' };
   assert.equal(JSON.stringify(parseSwarm(input)).includes('private'), false);

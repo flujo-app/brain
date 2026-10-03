@@ -68,7 +68,9 @@ changes and a trailing diagnostics update when on-demand rendering settles.
 Fresh observations do not establish worker activity. A cell needs an active
 controller, ready lifecycle, recent heartbeat, an unexpired running lease and
 no owned unknown outcome. Completed/cancelled operations do not animate as
-running work. Pause, effect drain and worker quiescence remain separate facts.
+running work. Unknown external outcomes keep their cell's uncertainty marker
+after task completion or retirement, until an observed resolution replaces them.
+Pause, effect drain and worker quiescence remain separate facts.
 The selected inspector preserves task, candidate and review digests and states
 that quiescence is unverified.
 

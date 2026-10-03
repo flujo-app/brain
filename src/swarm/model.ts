@@ -99,7 +99,8 @@ export function activities(source: Source, now: number, sample = false): Map<str
   const observedAge = now - Date.parse(source.snapshot!.observedAt);
   for (const cell of state.cells) {
     const expiry = running.get(cell.id), heartbeatAge = now - Date.parse(cell.heartbeat);
-    result.set(cell.id, expiry === undefined ? 'idle' : source.status !== 'observed' || (!sample && (observedAge > 15000 || observedAge < -5000)) || state.control.status !== 'active' || cell.status !== 'ready' || heartbeatAge < 0 || heartbeatAge > 60000 || expiry <= now || unknown.has(cell.id) ? 'uncertain' : 'recent');
+    // Task completion does not resolve an external operation's unknown outcome.
+    result.set(cell.id, unknown.has(cell.id) ? 'uncertain' : expiry === undefined ? 'idle' : source.status !== 'observed' || (!sample && (observedAge > 15000 || observedAge < -5000)) || state.control.status !== 'active' || cell.status !== 'ready' || heartbeatAge < 0 || heartbeatAge > 60000 || expiry <= now ? 'uncertain' : 'recent');
   }
   return result;
 }
