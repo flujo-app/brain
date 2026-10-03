@@ -65,6 +65,13 @@ with Bash. The integration pass added camera fitting around visible instruments,
 responsive reframing, measured label collision bounds, live reduced-motion
 changes and a trailing diagnostics update when on-demand rendering settles.
 
+Static shapes also preserve status under reduced motion: authority plates use
+a hollow keystone, observed idle cells an open ring, recent qualifying leased
+work a bullseye, uncertain evidence an amber barred ring, and retained records
+a broken grey ring. Unconfirmed running-work evidence is distinct from an
+owned unknown external outcome in the inspector. Only an owned unknown outcome
+outranks retirement or source staleness; it remains unresolved by completion.
+
 Fresh observations do not establish worker activity. A cell needs an active
 controller, ready lifecycle, recent heartbeat, an unexpired running lease and
 no owned unknown outcome. Completed/cancelled operations do not animate as
@@ -76,8 +83,8 @@ that quiescence is unverified.
 
 ## Development and verification
 
-Run `npm ci`, `npm run build` and `npm run test:swarm`. Tests use the actual model
-and preview modules and cover duplicate record IDs across authorities, complete
+Run `npm ci`, `npm run build` and `npm run test:swarm`. Tests use the actual model,
+marker, transport and preview modules and cover duplicate record IDs across authorities, complete
 10,000-deep/wide navigation, stable layout, stale/lease/terminal activity gates,
 positive allowlists and missing-source behavior. Copy the built `dist` artifact
 to the consumer's ignored viewer directory for local integration; keep source
@@ -90,6 +97,14 @@ context loss. The world had 10,003 indexed nodes; its overview drew 18 nodes and
 the selected neighborhood drew 10, with two GPU draw calls in 3D and no GL calls
 in 2D. Desktop, 615-pixel and 390-pixel layouts were checked. Reduced motion
 stopped an already-running renderer; 2D settled without an animation loop.
-These are fixture/navigation checks, not live FACTORY health evidence. The
-read-only observer was still offline at the last 2026-10-03 qualification check;
-its owner must restore and qualify it before a fresh live witness is recorded.
+These are fixture/navigation checks, not live FACTORY health evidence.
+
+After FACTORY's owner restored and qualified its observer, the actual Brain
+Online BFF passed a fresh read at 2026-10-03T21:06:54Z: loaded build
+`d9d87c6ebbd05b6c82bdbf0f7c537e76eb4b9a66`, paused admission at revision 92,
+five cells, three tasks and six effects. Staff reads returned 200, anonymous
+reads 401 and customer reads 404; snapshot/event responses were no-store and
+contained no server credential. The actual host component and upstream artifact
+also displayed these live records in a local qualification harness with a
+development staff principal and five-second refreshes. This does not qualify
+a production Supabase login or prove provider freshness or worker quiescence.

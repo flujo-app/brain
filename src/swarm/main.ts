@@ -2,7 +2,7 @@ import './swarm.css';
 import './observatory.css';
 import { activities, nodeKey, parseSwarm, selectionFragment, selectionFromFragment, SwarmIndex, type Node, type Selection, type Source, type Swarm } from './model';
 import { readSwarmJson } from './transport';
-import { SwarmRenderer, sourceColor } from './renderer';
+import { activityEvidence, markerLegend, markerOf, markerTitle, SwarmRenderer, sourceColor, type Marker } from './renderer';
 import { swarmPreview } from './preview';
 
 const $ = (id: string): HTMLElement => document.getElementById(id)!;
@@ -10,6 +10,12 @@ const element = <T extends keyof HTMLElementTagNameMap>(tag: T, text?: string, c
   const result = document.createElement(tag); if (text !== undefined) result.textContent = text; if (className) result.className = className; return result;
 };
 const button = (text: string, action: () => void, pressed = false): HTMLButtonElement => { const result = element('button', text); result.type = 'button'; result.setAttribute('aria-pressed', String(pressed)); result.onclick = action; return result; };
+const markerChip = (marker: Marker, className: string): HTMLSpanElement => {
+  // The rail, the legend and the field all read the same marker vocabulary.
+  const chip = element('span', undefined, `marker ${className}`);
+  chip.dataset.marker = marker; chip.title = `${markerTitle[marker]} — ${markerLegend[marker]}`;
+  return chip;
+};
 const timestamp = (value: string): string => new Intl.DateTimeFormat(undefined, { timeZone: 'America/Bogota', dateStyle: 'medium', timeStyle: 'medium' }).format(new Date(value));
 const taskLabel = (status: string) => status === 'completed' ? 'operation completed' : status;
 const empty = (): Swarm => ({ schemaVersion: 1, scope: 'operator-source-registry', observedAt: new Date().toISOString(), commands: false, sources: [] });
@@ -83,9 +89,11 @@ function paintNavigation(): void {
     // Exactly the renderer's deterministic plate colour, never a list position.
     item.style.setProperty('--accent', sourceColor(source.id));
     item.dataset.status = status;
-    item.replaceChildren(element('span', undefined, 'source-dot'), element('strong', source.label, 'source-name'),
-      element('small', `${status} · ${cells.length} cells${evidenced ? ` · ${evidenced} evidenced` : ''}`));
-    item.title = source.factoryId; sourceList.append(item);
+    const marker: Marker = status === 'observed' ? 'plate' : 'quiet';
+    item.dataset.marker = marker;
+    item.replaceChildren(markerChip(marker, 'source-dot'), element('strong', source.label, 'source-name'),
+      element('small', `${status} · ${cells.length} recorded cells${evidenced ? ` · ${evidenced} with a running lease` : ''}`));
+    item.title = `${source.factoryId} · ${markerLegend[marker]}`; sourceList.append(item);
   }
   const focus = focusNode(), children = focus ? index.children.get(focus.key) ?? [] : [];
   $('branch-heading').textContent = focus ? `DELEGATION · ${focus.label} · ${children.length} children` : 'DELEGATION · select a source';
@@ -93,10 +101,13 @@ function paintNavigation(): void {
   for (const key of children.slice(page * 128, (page + 1) * 128)) {
     const node = index.nodes.get(key)!;
     const item = button(node.label, () => select(node.selection), key === focus?.key);
+    const marker = markerOf(node);
     item.className = `branch-record activity-${node.activity}`;
+    item.dataset.marker = marker;
     item.style.setProperty('--accent', sourceColor(node.source.id));
-    item.replaceChildren(element('span', undefined, 'branch-dot'), element('strong', node.label, 'branch-name'),
-      element('small', `${node.cell?.role ?? 'source'} · ${node.cell?.status ?? sourceStatus(node.source)} · ${index.children.get(key)?.length ?? 0} children`));
+    item.title = `${node.source.factoryId} / ${node.label} · ${markerLegend[marker]}`;
+    item.replaceChildren(markerChip(marker, 'branch-dot'), element('strong', node.label, 'branch-name'),
+      element('small', `${node.cell?.role ?? 'source'} · ${node.cell?.status ?? sourceStatus(node.source)} · ${markerTitle[marker].toLowerCase()} · ${index.children.get(key)?.length ?? 0} children`));
     $('branch-list').append(item);
   }
   if (children.length > 128) {
@@ -127,7 +138,20 @@ function evidenceList(container: HTMLElement, pairs: Array<[string, string]>): v
 function paintInspector(): void {
   const container = $('swarm-inspect'); container.replaceChildren();
   container.style.removeProperty('--accent');
-  if (!selection) { container.append(element('p', 'THE OBSERVATORY', 'evidence-kicker'), element('h2', 'A constellation of work.'), element('p', 'Move from registered authorities to their coordinators and delegated cells. Search reaches every recorded cell, task and external effect.'), element('p', 'This view follows observations. It cannot start, stop or resume workers.'), element('p', 'Select a source to inspect its provenance and recorded work.')); return; }
+  if (!selection) {
+    container.append(element('p', 'THE OBSERVATORY', 'evidence-kicker'), element('h2', 'A constellation of work.'),
+      element('p', 'Move from registered authorities to their coordinators and delegated cells. Search reaches every recorded cell, task and external effect.'),
+      element('p', 'This view follows observations. It cannot start, stop or resume workers.'),
+      element('h3', 'Reading the markers'));
+    const guide = element('ul', undefined, 'marker-guide');
+    for (const marker of ['plate', 'idle', 'recent', 'uncertain', 'quiet'] as Marker[]) {
+      const row = element('li');
+      row.append(markerChip(marker, 'guide-dot'), element('strong', markerTitle[marker]), element('small', markerLegend[marker]));
+      guide.append(row);
+    }
+    container.append(guide, element('p', 'Markers describe recorded observations only. They never establish host health, physical worker activity or quiescence, and shape rather than animation carries each state.', 'evidence-note'));
+    return;
+  }
   const source = index.sources.get(selection.sourceId)!;
   container.style.setProperty('--accent', sourceColor(source.id));
   container.append(element('p', selection.kind === 'source' ? 'REGISTERED AUTHORITY' : `RECORDED ${selection.kind.toUpperCase()}`, 'evidence-kicker'),
@@ -146,7 +170,8 @@ function paintInspector(): void {
   } else if (selection.kind === 'cell') {
     const cell = state.cells.find(cell => cell.id === selection!.id)!;
     container.append(element('p', cell.purpose));
-    evidenceList(container, [['Role / lifecycle', `${cell.role} / ${cell.status}`], ['Recorded parent', cell.parentId ?? 'Local root'], ['Heartbeat', timestamp(cell.heartbeat)], ['Activity evidence', activities(source, Date.now(), swarm.sample).get(cell.id) ?? 'idle'], ['Logical allocation', `$${(cell.allocationCents / 100).toFixed(2)} · logical-allocation`], ['Worker quiescence', 'unverified']]);
+    const node = index.nodeFor(selection)!;
+    evidenceList(container, [['Role / lifecycle', `${cell.role} / ${cell.status}`], ['Recorded parent', cell.parentId ?? 'Local root'], ['Heartbeat', timestamp(cell.heartbeat)], ['Activity evidence', activityEvidence({ ...node, activity: activities(source, Date.now(), swarm.sample).get(cell.id) ?? 'idle' })], ['Logical allocation', `$${(cell.allocationCents / 100).toFixed(2)} · logical-allocation`], ['Worker quiescence', 'unverified']]);
     container.append(element('h3', 'Owned tasks')); appendTasks(container, source, state.tasks.filter(task => task.owner === cell.id));
     container.append(element('h3', 'Owned external effects')); appendEffects(container, source, state.effects.filter(effect => effect.owner === cell.id));
     if (cell.parentId && !state.cells.some(parent => parent.id === cell.parentId)) container.append(element('p', 'The parent is absent from this observation. Its position does not prove a delegation link.', 'evidence-note'));

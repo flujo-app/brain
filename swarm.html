@@ -40,12 +40,14 @@
             <div class="observatory-title">A wider mind.</div>
             <span id="swarm-counts"></span>
             <p>Orbit the recorded world. Enter a source. Follow its work.</p>
-            <ul class="field-legend">
-              <li class="legend-live"><i aria-hidden="true"></i>unexpired lease · recent heartbeat</li>
-              <li class="legend-uncertain"><i aria-hidden="true"></i>uncertain evidence</li>
-              <li class="legend-quiet"><i aria-hidden="true"></i>retired · reserved · stale</li>
-              <li class="legend-plate"><i aria-hidden="true"></i>authority plate</li>
+            <ul class="field-legend" aria-label="Static marker guide">
+              <li><i class="marker" data-marker="plate" aria-hidden="true"></i>authority plate · not worker activity</li>
+              <li><i class="marker" data-marker="idle" aria-hidden="true"></i>observed · no running lease</li>
+              <li><i class="marker" data-marker="recent" aria-hidden="true"></i>running lease · recent heartbeat</li>
+              <li><i class="marker" data-marker="uncertain" aria-hidden="true"></i>work unconfirmed · or outcome unknown</li>
+              <li><i class="marker" data-marker="quiet" aria-hidden="true"></i>retained · retired, reserved or stale</li>
             </ul>
+            <p class="legend-note">Shapes, not motion: recorded observations only, never host or worker health.</p>
           </div>
         </div>
         <details class="swarm-timeline"><summary class="section-title">LIVE TRACKING <span id="tracking-scope"></span></summary><div id="tracking-list"></div></details>
@@ -53,7 +55,7 @@
       </section>
       <aside class="swarm-inspector" aria-label="Selected swarm evidence"><div class="section-title">EVIDENCE <button id="swarm-close" aria-label="Close evidence">×</button></div><div id="swarm-inspect"></div></aside>
     </main>
-    <footer><span>FACTORY owns execution and recovery.</span><span>Recorded activity does not establish host health.</span><span>Worker quiescence: <b>unverified</b>.</span></footer>
+    <footer><span>FACTORY owns execution and recovery.</span><span>Recorded activity does not establish host health.</span><span>Worker quiescence: <b>unverified</b>.</span><span>Markers report records, not host health.</span></footer>
   </div>
   <script type="module" src="/src/swarm/main.ts"></script>
 </body></html>

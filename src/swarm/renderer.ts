@@ -1,6 +1,6 @@
 import { BufferGeometry, Color, Float32BufferAttribute, LineBasicMaterial, LineSegments, PerspectiveCamera, Points, Scene, ShaderMaterial, Vector3, WebGLRenderer } from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import type { Node, Point } from './model';
+import type { Node, Point, Source } from './model';
 
 /** Deterministic authority palette. The navigation indicators read the same
  * function, so a plate in the field and its index entry cannot disagree. */
@@ -10,34 +10,105 @@ export const sourceHue = (id: string) => hues[[...id].reduce((sum, char) => (sum
 export const sourceColor = sourceHue;
 export const uncertainHue = '#e0a85c';
 export const retiredHue = '#7d8798';
-const tint = (node: Node): string => node.source.status !== 'observed' ? retiredHue : node.activity === 'uncertain' ? uncertainHue : node.cell?.status === 'retired' ? retiredHue : sourceHue(node.source.id);
+
+/** The five static status forms. Shape, not motion or brightness alone,
+ * carries the meaning, so every state stays recognisable with reduced motion:
+ *  plate     - a registered authority's engraved disc. Its centre is a hollow
+ *              keystone, never a filled core: a plate is not worker activity.
+ *  idle      - observed record, no running lease: a single open hairline ring.
+ *  recent    - unexpired running lease on a fresh heartbeat: ring plus a
+ *              separated inner core (bullseye). Observation, not host health.
+ *  uncertain - unconfirmed running-work evidence or an owned unknown outcome:
+ *              amber ring struck through.
+ *  quiet     - retained record (retired, reserved, stale or unavailable):
+ *              a broken dashed ring with no core. */
+export type Marker = 'plate' | 'idle' | 'recent' | 'uncertain' | 'quiet';
+// Canonical envelopes are replaced on observation; clock ticks only update
+// source availability/activity. Cache once per envelope, with no retained owner
+// after that observation is collected and no per-cell scan of all effects.
+const unknownOwners = new WeakMap<NonNullable<Source['snapshot']>, Set<string>>();
+export function hasUnknownOutcome(source: Source, cellId: string): boolean {
+  const envelope = source.snapshot; if (!envelope) return false;
+  let owners = unknownOwners.get(envelope);
+  if (!owners) { owners = new Set(envelope.snapshot.effects.filter(effect => effect.state === 'unknown').map(effect => effect.owner)); unknownOwners.set(envelope, owners); }
+  return owners.has(cellId);
+}
+export const markerOf = (node: Node): Marker => !node.cell ? node.source.status === 'observed' ? 'plate' : 'quiet'
+  // An unknown owned effect outranks completion, retirement and pause.
+  : hasUnknownOutcome(node.source, node.cell.id) ? 'uncertain'
+  : node.source.status !== 'observed' || node.cell.status === 'retired' || node.cell.status === 'reserved' ? 'quiet'
+  : node.activity === 'uncertain' ? 'uncertain'
+  : node.activity === 'recent' ? 'recent' : 'idle';
+export const markerForm: Record<Marker, number> = { plate: 0, idle: 1, recent: 2, uncertain: 3, quiet: 4 };
+/** Wording is deliberately about the record, never about physical health. */
+export const markerLegend: Record<Marker, string> = {
+  plate: 'registered authority · not worker activity',
+  idle: 'observed record · no running lease',
+  recent: 'running lease · recent heartbeat recorded',
+  uncertain: 'running-work evidence unconfirmed or owned outcome unknown',
+  quiet: 'retained record · retired, reserved or stale',
+};
+export const markerTitle: Record<Marker, string> = {
+  plate: 'Authority plate', idle: 'Observed idle', recent: 'Recent leased work', uncertain: 'Uncertain', quiet: 'Retained record',
+};
+export function activityEvidence(node: Node): string {
+  if (node.cell && hasUnknownOutcome(node.source, node.cell.id)) return 'owned external outcome unknown · unresolved by completion or retirement';
+  if (node.source.status !== 'observed') return 'retained observation · current activity unconfirmed';
+  if (node.cell?.status === 'retired' || node.cell?.status === 'reserved') return `${node.cell.status} record · worker activity unverified`;
+  return node.activity === 'uncertain' ? 'running-work evidence unconfirmed · inspect controller, lease and heartbeat'
+    : node.activity === 'recent' ? 'running lease unexpired · heartbeat recent in this observation'
+    : 'observed record · no running lease';
+}
+export const markerColor = (node: Node): string => {
+  const marker = markerOf(node);
+  if (marker === 'uncertain') return uncertainHue;
+  if (marker === 'quiet' || node.source.status !== 'observed') return retiredHue;
+  return sourceHue(node.source.id);
+};
+const tint = markerColor;
 
 /** One batched point program: engraved plates, cell rings, cores and haloes.
  * Depth attenuation keeps a deep field legible without a second pass. */
-const vertexShader = `attribute float aSize; attribute float aActive; attribute float aFill; attribute float aPlate; attribute float aSelected;
-varying vec3 vColor; varying float vActive; varying float vFill; varying float vPlate; varying float vSelected; varying float vFade; uniform float uTime;
+const vertexShader = `attribute float aSize; attribute float aActive; attribute float aForm; attribute float aSelected;
+varying vec3 vColor; varying float vForm; varying float vSelected; varying float vFade; uniform float uTime;
 void main(){
-  vColor=color; vActive=aActive; vFill=aFill; vPlate=aPlate; vSelected=aSelected;
+  vColor=color; vForm=aForm; vSelected=aSelected;
   vec4 p=modelViewMatrix*vec4(position,1.);
   float depth=max(1.,-p.z);
   vFade=clamp(1.25-depth/5200.,.34,1.);
-  float breath=1.+aActive*.09*sin(uTime*2.+position.x*.12);
+  // Optional breathing, a courtesy only: aActive is zero under reduced motion
+  // and recent work is already distinguished by its static bullseye form.
+  float breath=1.+aActive*.07*sin(uTime*2.+position.x*.12);
   gl_PointSize=clamp(aSize*breath*(1.+aSelected*.26)*200./depth,7.,78.);
   gl_Position=projectionMatrix*p;
 }`;
-const fragmentShader = `varying vec3 vColor; varying float vActive; varying float vFill; varying float vPlate; varying float vSelected; varying float vFade;
+const fragmentShader = `varying vec3 vColor; varying float vForm; varying float vSelected; varying float vFade;
 void main(){
   vec2 uv=gl_PointCoord-.5; float d=length(uv)*2.;
   if(d>1.)discard;
-  float core=(1.-smoothstep(.0,.40,d))*vFill;
-  float ring=smoothstep(.49,.58,d)*(1.-smoothstep(.70,.80,d));
-  float plate=vPlate*smoothstep(.86,.91,d)*(1.-smoothstep(.97,1.,d));
-  float halo=exp(-d*d*3.6)*(.10+.12*vFill);
+  float plate=step(vForm,.5);
+  float idle=step(.5,vForm)*step(vForm,1.5);
+  float recent=step(1.5,vForm)*step(vForm,2.5);
+  float uncertain=step(2.5,vForm)*step(vForm,3.5);
+  float quiet=step(3.5,vForm);
+  // One shared engraved outline; quiet records break it into nine dashes.
+  float ring=smoothstep(.47,.55,d)*(1.-smoothstep(.65,.73,d));
+  float dash=step(.42,fract(atan(uv.y,uv.x)*1.43239));
+  float outline=ring*(1.-quiet*dash);
+  // Recent: a separated core inside the ring reads as a bullseye at any size.
+  float core=recent*(1.-smoothstep(.25,.33,d));
+  // Uncertain: the ring is struck through, a caution glyph rather than a glow.
+  float bar=uncertain*(1.-smoothstep(.06,.10,abs(uv.y)*2.))*(1.-smoothstep(.30,.42,abs(uv.x)*2.));
+  // Authority plate: wide bezel and a hollow keystone; deliberately no core.
+  float bezel=plate*smoothstep(.84,.90,d)*(1.-smoothstep(.96,1.,d));
+  float keystone=plate*(1.-smoothstep(.03,.06,abs((abs(uv.x)+abs(uv.y))*2.-.36)));
+  float halo=exp(-d*d*3.4)*(.05+.13*recent+.04*plate);
   vec2 q=abs(uv)*2.;
-  float spike=vSelected*max(exp(-q.x*22.),exp(-q.y*22.))*(1.-smoothstep(.2,1.,d))*.55;
+  float spike=vSelected*max(exp(-q.x*22.),exp(-q.y*22.))*(1.-smoothstep(.2,1.,d))*.5;
   float select=vSelected*smoothstep(.80,.88,d)*(1.-smoothstep(.95,1.,d));
-  vec3 lit=mix(vColor,vec3(.93,.99,1.),clamp(core*.55+spike*.7+select*.8,0.,1.));
-  float alpha=(ring*.9+core*.85+halo+plate*.55+spike*.6+select*.95)*vFade;
+  float weight=outline*(recent+idle*.62+uncertain*.85+quiet*.5+plate*.78);
+  vec3 lit=mix(vColor,vec3(.93,.99,1.),clamp(core*.5+spike*.7+select*.8,0.,1.));
+  float alpha=(weight+core*.95+bar*.9+bezel*.6+keystone*.5+halo+spike*.6+select*.95)*vFade;
   gl_FragColor=vec4(lit,clamp(alpha,0.,1.));
 }`;
 
@@ -151,7 +222,7 @@ export class SwarmRenderer {
     // The plan view has no animated shader; it only needs observation/input redraws.
     this.active = !!this.gl && !this.motion.matches && nodes.some(node => node.activity === 'recent');
     if (this.gl) {
-      const pos: number[] = [], colors: number[] = [], sizes: number[] = [], active: number[] = [], fill: number[] = [], plate: number[] = [], chosen: number[] = [];
+      const pos: number[] = [], colors: number[] = [], sizes: number[] = [], active: number[] = [], form: number[] = [], chosen: number[] = [];
       const linkPos: number[] = [], linkColors: number[] = [];
       const byKey = new Map(nodes.map(node => [node.key, node]));
       // Static engraved source plates share the delegation line batch. They are
@@ -181,10 +252,13 @@ export class SwarmRenderer {
         pos.push(node.point.x, node.point.y, node.point.z);
         const own = new Color(tint(node)), color = new Color(node.key === selected ? '#e6fff8' : tint(node));
         colors.push(color.r, color.g, color.b);
-        sizes.push(!node.cell ? 21 : node.key === selected ? 17 : node.cell.role === 'coordinator' ? 13.5 : node.cell.role === 'verifier' ? 10 : 8.5);
-        active.push(!this.motion.matches && node.activity === 'recent' ? 1 : 0);
-        fill.push(node.source.status === 'observed' && node.cell?.status !== 'retired' && node.cell?.status !== 'reserved' && node.activity !== 'uncertain' ? 1 : 0);
-        plate.push(node.cell ? 0 : 1); chosen.push(node.key === selected ? 1 : 0);
+        const marker = markerOf(node);
+        // Evidenced and uncertain records are also drawn slightly larger, so
+        // the distinction survives a small point without relying on motion.
+        const emphasis = marker === 'recent' ? 1.3 : marker === 'uncertain' ? 1.16 : marker === 'quiet' ? .92 : 1;
+        sizes.push((!node.cell ? 21 : node.key === selected ? 17 : node.cell.role === 'coordinator' ? 13.5 : node.cell.role === 'verifier' ? 10 : 8.5) * (node.cell ? emphasis : 1));
+        active.push(!this.motion.matches && marker === 'recent' ? 1 : 0);
+        form.push(markerForm[marker]); chosen.push(node.key === selected ? 1 : 0);
         const parent = node.parent ? byKey.get(node.parent) : undefined;
         if (parent?.cell && node.cell?.parentId) {
           // Lifted delegation ribbons fading parent to child, one line batch.
@@ -199,7 +273,7 @@ export class SwarmRenderer {
       const geometry = new BufferGeometry();
       geometry.setAttribute('position', new Float32BufferAttribute(pos, 3)); geometry.setAttribute('color', new Float32BufferAttribute(colors, 3));
       geometry.setAttribute('aSize', new Float32BufferAttribute(sizes, 1)); geometry.setAttribute('aActive', new Float32BufferAttribute(active, 1));
-      geometry.setAttribute('aFill', new Float32BufferAttribute(fill, 1)); geometry.setAttribute('aPlate', new Float32BufferAttribute(plate, 1));
+      geometry.setAttribute('aForm', new Float32BufferAttribute(form, 1));
       geometry.setAttribute('aSelected', new Float32BufferAttribute(chosen, 1));
       if (this.points) { this.points.geometry.dispose(); this.points.geometry = geometry; }
       else { this.points = new Points(geometry, new ShaderMaterial({ vertexShader, fragmentShader, vertexColors: true, transparent: true, depthWrite: false, uniforms: { uTime: { value: 0 } } })); this.scene.add(this.points); }
@@ -212,9 +286,11 @@ export class SwarmRenderer {
     this.labels.replaceChildren(); this.labelElements = [];
     for (const node of labelled) {
       const span = document.createElement('span');
-      span.className = `swarm-label${!node.cell ? ' source-label' : ''}${node.key === selected ? ' selected' : ''}${node.activity === 'recent' ? ' active' : ''}`;
+      const marker = markerOf(node);
+      span.className = `swarm-label${!node.cell ? ' source-label' : ''}${node.key === selected ? ' selected' : ''}${marker === 'recent' ? ' active' : ''}`;
+      span.dataset.marker = marker;
       span.textContent = node.label.length > 24 ? `${node.label.slice(0, 22)}…` : node.label;
-      span.title = `${node.source.factoryId} / ${node.label}`;
+      span.title = `${node.source.factoryId} / ${node.label} · ${markerLegend[marker]}`;
       span.dataset.key = node.key;
       span.style.setProperty('--accent', sourceHue(node.source.id));
       if (!node.cell) { const kicker = document.createElement('i'); kicker.textContent = node.source.status === 'observed' ? 'authority' : node.source.status; span.append(kicker); }
@@ -300,14 +376,25 @@ export class SwarmRenderer {
       context.strokeStyle = lit ? `${tint(node)}c0` : `${tint(node)}30`; context.lineWidth = lit ? 1.4 : 1; context.stroke();
     }
     for (const node of this.nodes) {
-      const point = this.projected.get(node.key)!, hue = tint(node);
-      const radius = !node.cell ? 14 : node.key === this.selected ? 10 : node.cell.role === 'coordinator' ? 9 : node.cell.role === 'verifier' ? 6 : 5;
-      const gradient = context.createRadialGradient(point.x, point.y, 0, point.x, point.y, radius * 3.2);
-      gradient.addColorStop(0, `${hue}cc`); gradient.addColorStop(.32, `${hue}55`); gradient.addColorStop(1, `${hue}00`);
-      context.fillStyle = gradient; context.beginPath(); context.arc(point.x, point.y, radius * 3.2, 0, Math.PI * 2); context.fill();
-      context.strokeStyle = hue; context.lineWidth = node.cell ? 1 : 1.4; context.beginPath(); context.arc(point.x, point.y, radius * .78, 0, Math.PI * 2); context.stroke();
-      if (!node.cell) { context.strokeStyle = `${hue}66`; context.beginPath(); context.arc(point.x, point.y, radius * 1.5, 0, Math.PI * 2); context.stroke(); }
-      if (node.source.status === 'observed' && node.cell?.status !== 'retired' && node.cell?.status !== 'reserved' && node.activity !== 'uncertain') { context.fillStyle = hue; context.beginPath(); context.arc(point.x, point.y, radius * .34, 0, Math.PI * 2); context.fill(); }
+      const point = this.projected.get(node.key)!, hue = tint(node), marker = markerOf(node);
+      const scale = marker === 'recent' ? 1.3 : marker === 'uncertain' ? 1.16 : marker === 'quiet' ? .92 : 1;
+      const radius = (!node.cell ? 14 : node.key === this.selected ? 10 : node.cell.role === 'coordinator' ? 9 : node.cell.role === 'verifier' ? 6 : 5) * (node.cell ? scale : 1);
+      const bloom = marker === 'recent' ? 2.6 : marker === 'plate' ? 3.2 : 1.9;
+      const gradient = context.createRadialGradient(point.x, point.y, 0, point.x, point.y, radius * bloom);
+      gradient.addColorStop(0, `${hue}${marker === 'idle' || marker === 'quiet' ? '44' : '88'}`); gradient.addColorStop(.34, `${hue}33`); gradient.addColorStop(1, `${hue}00`);
+      context.fillStyle = gradient; context.beginPath(); context.arc(point.x, point.y, radius * bloom, 0, Math.PI * 2); context.fill();
+      context.setLineDash(marker === 'quiet' ? [2.4, 2.4] : []);
+      context.strokeStyle = marker === 'idle' ? `${hue}b0` : marker === 'quiet' ? `${hue}a0` : hue;
+      context.lineWidth = marker === 'plate' ? 1.4 : marker === 'recent' ? 1.3 : 1;
+      context.beginPath(); context.arc(point.x, point.y, radius * .78, 0, Math.PI * 2); context.stroke();
+      context.setLineDash([]);
+      if (marker === 'plate') {
+        // Bezel plus a hollow keystone: an authority, never evidenced activity.
+        context.strokeStyle = `${hue}66`; context.beginPath(); context.arc(point.x, point.y, radius * 1.5, 0, Math.PI * 2); context.stroke();
+        context.beginPath(); context.moveTo(point.x, point.y - radius * .32); context.lineTo(point.x + radius * .32, point.y); context.lineTo(point.x, point.y + radius * .32); context.lineTo(point.x - radius * .32, point.y); context.closePath(); context.stroke();
+      }
+      if (marker === 'recent') { context.fillStyle = hue; context.beginPath(); context.arc(point.x, point.y, radius * .34, 0, Math.PI * 2); context.fill(); }
+      if (marker === 'uncertain') { context.strokeStyle = hue; context.lineWidth = 1.2; context.beginPath(); context.moveTo(point.x - radius * .46, point.y); context.lineTo(point.x + radius * .46, point.y); context.stroke(); }
       if (node.key === this.selected) {
         context.strokeStyle = '#d2fff0'; context.lineWidth = 1.2;
         context.beginPath(); context.arc(point.x, point.y, radius + 5, 0, Math.PI * 2); context.stroke();

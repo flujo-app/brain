@@ -5,13 +5,14 @@ import { performance } from 'node:perf_hooks';
 import ts from 'typescript';
 const generated = new URL('../.vite/swarm-tests/', import.meta.url);
 await mkdir(generated, { recursive: true });
-for (const name of ['model', 'preview', 'transport']) {
+for (const name of ['model', 'preview', 'transport', 'renderer']) {
   const source = await readFile(new URL(`../src/swarm/${name}.ts`, import.meta.url), 'utf8');
   await writeFile(new URL(`${name}.mjs`, generated), ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext } }).outputText);
 }
 const { parseSwarm, SwarmIndex, nodeKey, activities, selectionFragment, selectionFromFragment } = await import(new URL('model.mjs', generated));
 const { swarmPreview } = await import(new URL('preview.mjs', generated));
 const { readSwarmJson } = await import(new URL('transport.mjs', generated));
+const { markerOf, activityEvidence } = await import(new URL('renderer.mjs', generated));
 
 test('deep links bind a reused registry alias to its exact factory and reject ambiguous/missing authority', () => {
   const swarm = swarmPreview(), source = swarm.sources[0], selected = { sourceId: source.id, kind: 'cell', id: 'root' };
@@ -124,6 +125,37 @@ test('an unknown external outcome remains uncertain after operational completion
   assert.equal(state.workerQuiescence, 'unverified');
   state.effects[0].state = 'succeeded';
   assert.equal(activities(source, now).get(task.owner), 'idle');
+});
+
+test('static markers distinguish unconfirmed running work, retained lifecycles and unresolved effects', () => {
+  const node = change => {
+    const input = swarmPreview(), source = input.sources[0], state = source.snapshot.snapshot;
+    change?.(source, state);
+    const parsed = parseSwarm(input), index = new SwarmIndex(parsed);
+    return index.nodeFor({ sourceId: source.id, kind: 'cell', id: 'cell-1' });
+  };
+  const marker = change => markerOf(node(change));
+  const pausedEvidence = activityEvidence(node((_source, state) => { state.control.status = 'paused'; }));
+  assert.match(pausedEvidence, /running-work evidence unconfirmed/);
+  assert.doesNotMatch(pausedEvidence, /owned external outcome unknown/);
+  assert.equal(marker(), 'recent');
+  assert.equal(marker((_source, state) => { state.control.status = 'paused'; }), 'uncertain');
+  assert.equal(marker((_source, state) => { state.tasks[0].leaseExpiry = new Date(Date.now() - 1000).toISOString(); }), 'uncertain');
+  assert.equal(marker((_source, state) => { state.cells[1].status = 'retired'; }), 'quiet');
+  assert.equal(marker((_source, state) => { state.cells[1].status = 'reserved'; }), 'quiet');
+  assert.equal(marker(source => { source.status = 'stale'; }), 'quiet');
+  assert.equal(marker((_source, state) => { state.tasks[0].status = 'completed'; }), 'idle');
+  assert.equal(marker((source, state) => {
+    source.status = 'stale'; state.control.status = 'paused'; state.cells[1].status = 'retired'; state.tasks[0].status = 'completed';
+    state.effects.push({ key: 'owned-unknown', kind: 'retire', state: 'unknown', owner: 'cell-1', taskId: 'implementation',
+      scope: 'cleanup', scopeId: 'cell-1', ownerEpoch: 1, controlEpoch: 3, createdAt: source.snapshot.observedAt,
+      updatedAt: source.snapshot.observedAt, requestDigest: 'b'.repeat(64) });
+  }), 'uncertain');
+  assert.equal(marker((source, state) => {
+    state.effects.push({ key: 'other-owner-unknown', kind: 'retire', state: 'unknown', owner: 'cell-2', taskId: 'retire-operation',
+      scope: 'cleanup', scopeId: 'cell-2', ownerEpoch: 1, controlEpoch: 3, createdAt: source.snapshot.observedAt,
+      updatedAt: source.snapshot.observedAt, requestDigest: 'b'.repeat(64) });
+  }), 'recent');
 });
 test('consumer drops private extensions and fails closed on capabilities/identity/duplicate records', () => {
   const input = swarmPreview(); input.token = 'private'; input.sources[0].origin = 'private'; input.sources[0].snapshot.snapshot.tasks[2].candidate.path = 'private'; input.sources[0].snapshot.snapshot.paidBudget = { token: 'private' };
