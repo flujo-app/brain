@@ -225,15 +225,17 @@ function redraw(): void {
   const accented = selection ? index.sources.get(selection.sourceId) : null;
   document.body.style.setProperty('--accent', accented ? sourceColor(accented.id) : '#7fd1de');
   const cells = swarm.sources.reduce((sum, source) => sum + (source.snapshot?.snapshot.cells.length ?? 0), 0), tasks = swarm.sources.reduce((sum, source) => sum + (source.snapshot?.snapshot.tasks.length ?? 0), 0);
-  const leased = [...index.nodes.values()].filter(node => node.cell && markerOf(node) === 'recent').length;
-  $('swarm-counts').replaceChildren(figure(String(swarm.sources.length), 'sources'), figure(cells.toLocaleString(), 'cells'), figure(tasks.toLocaleString(), 'tasks'), figure(String(leased), 'leased'));
+  const recentLeased = [...index.nodes.values()].filter(node => node.cell && markerOf(node) === 'recent').length;
+  const recentFigure = figure(String(recentLeased), 'recent leased');
+  recentFigure.title = 'Cells with an unexpired running lease and recent heartbeat/source evidence. Uncertain, unknown-outcome and retained records are excluded; this is not a full lease census.';
+  $('swarm-counts').replaceChildren(figure(String(swarm.sources.length), 'sources'), figure(cells.toLocaleString(), 'cells'), figure(tasks.toLocaleString(), 'tasks'), recentFigure);
   const stale = swarm.sources.filter(source => sourceStatus(source) !== 'observed').length;
   // The masthead O carries the registry: one arc per authority, filled mouth
-  // only while a running lease is recorded somewhere in the swarm.
-  const mark = oMark(swarm.sources.map(source => ({ color: sourceColor(source.id), broken: sourceStatus(source) !== 'observed' })), leased > 0, 30);
+  // only while recent leased-cell evidence exists somewhere in the swarm.
+  const mark = oMark(swarm.sources.map(source => ({ color: sourceColor(source.id), broken: sourceStatus(source) !== 'observed' })), recentLeased > 0, 30);
   mark.setAttribute('role', 'img');
   mark.removeAttribute('aria-hidden');
-  mark.setAttribute('aria-label', `${swarm.sources.length} registered authorities · ${leased} cells with a running lease`);
+  mark.setAttribute('aria-label', `${swarm.sources.length} registered authorities · ${recentLeased} cells with an unexpired running lease and recent heartbeat/source evidence; uncertain and retained records excluded`);
   $('brand-mark').replaceChildren(mark);
   $('swarm-status').textContent = swarm.sample ? `Sample data · design preview · ${cells.toLocaleString()} cells` : swarm.sources.length ? `Live · 5s observations · ${stale} stale` : 'Observation unavailable · no registered facts';
   $('swarm-status').classList.toggle('sample-notice', !!swarm.sample);

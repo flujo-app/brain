@@ -269,7 +269,7 @@ export function mountInsights(onSelect: (selection: Selection | null) => void) {
     const mark = oMark(segments, leased, 56);
     mark.setAttribute('role', 'img');
     mark.removeAttribute('aria-hidden');
-    mark.setAttribute('aria-label', `${swarm.sources.length} registered authorities · ${leased ? 'a running lease is recorded in scope' : 'no running lease recorded in scope'}`);
+    mark.setAttribute('aria-label', `${swarm.sources.length} registered authorities · ${leased ? 'recent leased-cell evidence in scope' : 'no recent leased-cell evidence in scope'}; running leases require recent heartbeat/source evidence, with uncertain and retained records excluded`);
     markSlot.replaceChildren(mark);
   }
   function paint() { paintMark(); paintAnalytics(); paintHistory(); paintWorkers(); paintConversations(); paintMachines(); }

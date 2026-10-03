@@ -27,7 +27,7 @@ export interface Segment { color: string; broken?: boolean }
 /** The O: a registry ring that opens into a mouth.
  * Each ring segment is one registered authority in its deterministic hue; a
  * broken segment is a retained or unavailable record. The mouth core is filled
- * only when the caller counted at least one running lease — it is a count,
+ * only when the caller counted recent leased-cell evidence — it is a count,
  * not a heartbeat, and it never animates by itself. */
 export function oMark(segments: Segment[], speaking: boolean, size = 44): SVGSVGElement {
   const root = frame('0 0 64 64', 'o-mark');
