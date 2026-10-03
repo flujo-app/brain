@@ -1,7 +1,8 @@
 import './swarm.css';
 import './observatory.css';
-import { activities, nodeKey, parseSwarm, SwarmIndex, type Node, type Selection, type Source, type Swarm } from './model';
-import { SwarmRenderer } from './renderer';
+import { activities, nodeKey, parseSwarm, selectionFragment, selectionFromFragment, SwarmIndex, type Node, type Selection, type Source, type Swarm } from './model';
+import { readSwarmJson } from './transport';
+import { SwarmRenderer, sourceColor } from './renderer';
 import { swarmPreview } from './preview';
 
 const $ = (id: string): HTMLElement => document.getElementById(id)!;
@@ -18,10 +19,7 @@ let swarm = empty(), index = new SwarmIndex(swarm), selection: Selection | null 
 let renderer: SwarmRenderer;
 let mode: '3d' | '2d' = query.get('view') === '2d' || ((navigator.hardwareConcurrency ?? 8) <= 4) ? '2d' : '3d';
 let lastActivity = '', follow = false, firstObservation = true;
-const selectionHash = (): Selection | null => {
-  const hash = new URLSearchParams(location.hash.slice(1)), sourceId = hash.get('source'), kind = hash.get('kind'), id = hash.get('id');
-  return sourceId && id && ['source', 'cell', 'task', 'effect'].includes(kind ?? '') ? { sourceId, kind: kind as Selection['kind'], id } : null;
-};
+const selectionHash = (): Selection | null => selectionFromFragment(swarm, location.hash);
 
 function validSelection(value: Selection): boolean {
   const source = index.sources.get(value.sourceId); if (!source) return false;
@@ -29,12 +27,16 @@ function validSelection(value: Selection): boolean {
 }
 function select(next: Selection | null, move = true): void {
   if (next && !validSelection(next)) return;
+  const previousNode = focusNode()?.key;
   selection = next; page = 0;
   document.body.classList.toggle('has-selection', !!next);
-  const hash = next ? new URLSearchParams({ source: next.sourceId, kind: next.kind, id: next.id }).toString() : '';
+  const source = next ? index.sources.get(next.sourceId)! : null;
+  // The selected authority tints the instruments with its deterministic hue.
+  document.body.style.setProperty('--accent', source ? sourceColor(source.id) : '#7fd1de');
+  const hash = next && source ? selectionFragment(source, next) : '';
   history.replaceState(null, '', `${location.pathname}${location.search}${hash ? `#${hash}` : ''}`);
-  redraw(); if (move) frameSelection();
-  if (embedded) window.parent.postMessage({ protocol: 'brain-swarm/1', type: 'select', channel, selection: next }, location.origin);
+  redraw(); if (move && (!next || !['task', 'effect'].includes(next.kind) || focusNode()?.key !== previousNode)) frameSelection();
+  if (embedded) window.parent.postMessage({ protocol: 'brain-swarm/1', type: 'select', channel, selection: next && source ? { ...next, factoryId: source.factoryId } : null }, location.origin);
 }
 function sourceStatus(source: Source): string {
   const age = source.snapshot ? Date.now() - Date.parse(source.snapshot.observedAt) : Infinity;
@@ -47,18 +49,26 @@ function frameSelection(): void {
   else renderer.frame(node?.point);
 }
 
+let statsTimer: ReturnType<typeof setTimeout> | undefined;
 function createRenderer(): void {
+  clearTimeout(statsTimer);
+  lastStats = 0;
   renderer?.dispose();
   const canvas = element('canvas'); canvas.id = 'swarm-canvas'; canvas.tabIndex = 0; canvas.setAttribute('aria-label', 'Spatial swarm. Use navigation buttons to select cells; Home fits the whole swarm.');
   $('swarm-canvas').replaceWith(canvas);
   renderer = new SwarmRenderer(canvas, $('swarm-labels'), mode); mode = renderer.mode;
+  document.body.dataset.view = mode;
   (document.getElementById('swarm-mode') as HTMLSelectElement).value = mode;
   renderer.onPick = node => select(node.selection);
   renderer.onStats = stats => {
     const diagnostics = $('swarm-diagnostics');
     Object.assign(diagnostics.dataset, { mode: stats.mode, visible: String(stats.visible), indexed: String(index.nodes.size), labels: String(stats.labels), draws: String(stats.draws), frames: String(stats.submissions), cpuMs: stats.cpuMs.toFixed(3) });
-    if (performance.now() - lastStats < 500) return; lastStats = performance.now();
-    diagnostics.textContent = `${stats.mode.toUpperCase()} · ${stats.visible} drawn / ${index.nodes.size} indexed nodes · ${stats.labels} labels · ${stats.draws} GL draw calls · ${stats.cpuMs.toFixed(2)} ms CPU submission · ${stats.submissions} frames`;
+    const text = `${stats.mode.toUpperCase()} · ${stats.visible} drawn / ${index.nodes.size} indexed nodes · ${stats.labels} labels · ${stats.draws} GL draw calls · ${stats.cpuMs.toFixed(2)} ms CPU submission · ${stats.submissions} frames`;
+    const publish = () => { statsTimer = undefined; lastStats = performance.now(); diagnostics.textContent = text; };
+    clearTimeout(statsTimer);
+    const remaining = 500 - (performance.now() - lastStats);
+    if (lastStats && remaining > 0) statsTimer = setTimeout(publish, remaining);
+    else publish();
   };
   redraw(); frameSelection();
 }
@@ -67,16 +77,26 @@ function paintNavigation(): void {
   const sourceList = $('source-list'); sourceList.replaceChildren();
   for (const source of index.sources.values()) {
     const item = button(source.label, () => select({ sourceId: source.id, kind: 'source', id: source.id }), selection?.sourceId === source.id);
-    item.className = `source-record source-${sourceStatus(source)}`;
-    item.append(element('small', `${sourceStatus(source)} · ${source.snapshot?.snapshot.cells.length ?? 0} cells`)); item.title = source.factoryId; sourceList.append(item);
+    const status = sourceStatus(source), cells = source.snapshot?.snapshot.cells ?? [];
+    const evidenced = cells.reduce((sum, cell) => sum + (index.nodes.get(nodeKey(source, 'cell', cell.id))?.activity === 'recent' ? 1 : 0), 0);
+    item.className = `source-record source-${status}`;
+    // Exactly the renderer's deterministic plate colour, never a list position.
+    item.style.setProperty('--accent', sourceColor(source.id));
+    item.dataset.status = status;
+    item.replaceChildren(element('span', undefined, 'source-dot'), element('strong', source.label, 'source-name'),
+      element('small', `${status} · ${cells.length} cells${evidenced ? ` · ${evidenced} evidenced` : ''}`));
+    item.title = source.factoryId; sourceList.append(item);
   }
   const focus = focusNode(), children = focus ? index.children.get(focus.key) ?? [] : [];
-  $('branch-heading').textContent = focus ? `${focus.label} · ${children.length} children` : 'Select a source to explore its delegation';
+  $('branch-heading').textContent = focus ? `DELEGATION · ${focus.label} · ${children.length} children` : 'DELEGATION · select a source';
   $('branch-list').replaceChildren(); $('branch-pages').replaceChildren();
   for (const key of children.slice(page * 128, (page + 1) * 128)) {
     const node = index.nodes.get(key)!;
     const item = button(node.label, () => select(node.selection), key === focus?.key);
-    item.append(element('small', `${node.cell?.role ?? 'source'} · ${node.cell?.status ?? sourceStatus(node.source)} · ${index.children.get(key)?.length ?? 0} children`));
+    item.className = `branch-record activity-${node.activity}`;
+    item.style.setProperty('--accent', sourceColor(node.source.id));
+    item.replaceChildren(element('span', undefined, 'branch-dot'), element('strong', node.label, 'branch-name'),
+      element('small', `${node.cell?.role ?? 'source'} · ${node.cell?.status ?? sourceStatus(node.source)} · ${index.children.get(key)?.length ?? 0} children`));
     $('branch-list').append(item);
   }
   if (children.length > 128) {
@@ -106,9 +126,12 @@ function evidenceList(container: HTMLElement, pairs: Array<[string, string]>): v
 }
 function paintInspector(): void {
   const container = $('swarm-inspect'); container.replaceChildren();
-  if (!selection) { container.append(element('h2', 'A constellation of work.'), element('p', 'Move from registered authorities to their coordinators and delegated cells. Search reaches every recorded cell, task and external effect.'), element('p', 'This view follows observations. It cannot start, stop or resume workers.'), element('p', 'Select a source to inspect its provenance and recorded work.')); return; }
+  container.style.removeProperty('--accent');
+  if (!selection) { container.append(element('p', 'THE OBSERVATORY', 'evidence-kicker'), element('h2', 'A constellation of work.'), element('p', 'Move from registered authorities to their coordinators and delegated cells. Search reaches every recorded cell, task and external effect.'), element('p', 'This view follows observations. It cannot start, stop or resume workers.'), element('p', 'Select a source to inspect its provenance and recorded work.')); return; }
   const source = index.sources.get(selection.sourceId)!;
-  container.append(element('div', `${sourceStatus(source)} · ${source.label}`, 'source-state'), element('h2', selection.kind === 'source' ? source.label : selection.id));
+  container.style.setProperty('--accent', sourceColor(source.id));
+  container.append(element('p', selection.kind === 'source' ? 'REGISTERED AUTHORITY' : `RECORDED ${selection.kind.toUpperCase()}`, 'evidence-kicker'),
+    element('div', `${sourceStatus(source)} · ${source.label}`, 'source-state'), element('h2', selection.kind === 'source' ? source.label : selection.id));
   evidenceList(container, [['Factory identity', source.factoryId], ['Registry source', source.id]]);
   const envelope = source.snapshot;
   if (!envelope) { container.append(element('p', 'This registered source has no available observation. No cells or execution state are inferred.', 'evidence-note')); return; }
@@ -167,6 +190,9 @@ function redraw(): void {
   renderer?.setNodes(visible, focus?.key ?? null);
   document.body.classList.toggle('has-selection', !!selection);
   paintNavigation(); paintInspector(); paintTracking();
+  document.body.classList.toggle('field-empty', !swarm.sources.length);
+  const accented = selection ? index.sources.get(selection.sourceId) : null;
+  document.body.style.setProperty('--accent', accented ? sourceColor(accented.id) : '#7fd1de');
   const cells = swarm.sources.reduce((sum, source) => sum + (source.snapshot?.snapshot.cells.length ?? 0), 0), tasks = swarm.sources.reduce((sum, source) => sum + (source.snapshot?.snapshot.tasks.length ?? 0), 0);
   $('swarm-counts').textContent = `${swarm.sources.length} registered sources · ${cells.toLocaleString()} recorded cells · ${tasks.toLocaleString()} tasks`;
   const stale = swarm.sources.filter(source => sourceStatus(source) !== 'observed').length;
@@ -184,7 +210,7 @@ function observe(value: unknown): void {
     return source;
   });
   swarm = next; index = new SwarmIndex(next);
-  if (selection && !validSelection(selection)) selection = null;
+  if (selection && (previous.get(selection.sourceId)?.factoryId !== index.sources.get(selection.sourceId)?.factoryId || !validSelection(selection))) select(null, false);
   if (firstObservation) { const wanted = selectionHash(); if (wanted && validSelection(wanted)) selection = wanted; firstObservation = false; }
   const active = [...index.nodes.values()].filter(node => node.activity === 'recent').map(node => node.key).sort().join('|');
   const changedActivity = active && active !== lastActivity; lastActivity = active;
@@ -199,7 +225,7 @@ createRenderer();
 ($('swarm-follow') as HTMLInputElement).onchange = event => { follow = (event.target as HTMLInputElement).checked; };
 $('swarm-home').onclick = () => select(null);
 $('swarm-close').onclick = () => select(null, false);
-$('swarm-explore').onclick = () => { const hidden = document.body.classList.toggle('navigation-hidden'); $('swarm-explore').setAttribute('aria-expanded', String(!hidden)); };
+$('swarm-explore').onclick = () => { const hidden = document.body.classList.toggle('navigation-hidden'); $('swarm-explore').setAttribute('aria-expanded', String(!hidden)); frameSelection(); };
 $('swarm-find').onclick = () => { document.body.classList.remove('navigation-hidden'); document.body.classList.add('search-open'); $('swarm-search').focus(); };
 window.addEventListener('keydown', event => {
   if (event.target instanceof HTMLInputElement || event.target instanceof HTMLSelectElement) return;
@@ -261,8 +287,8 @@ if (embedded) {
         const response = await fetch(path.pathname, { cache: 'no-store', signal: controller.signal, credentials: 'same-origin' });
         if ([401, 403, 404].includes(response.status)) { observe(empty()); throw new Error('Observation access unavailable'); }
         if (!response.ok) throw new Error('Swarm bridge unavailable');
-        const body = await response.text(); if (body.length > 32 * 1024 * 1024) throw new Error('Swarm observation exceeds its bound');
-        if (!stopped) observe(JSON.parse(body));
+        const body = await readSwarmJson(response);
+        if (!stopped) observe(body);
       } catch {
         if (!stopped) { swarm.sources = swarm.sources.map(source => ({ ...source, status: source.snapshot ? 'stale' : 'unavailable' })); index = new SwarmIndex(swarm); redraw(); $('swarm-status').textContent = 'Observation unavailable · retained facts are stale'; }
       } finally { clearTimeout(deadline); if (!stopped) timer = setTimeout(() => void poll(), 5000); }
@@ -271,4 +297,4 @@ if (embedded) {
   }
   window.addEventListener('pagehide', () => { stopped = true; controller?.abort(); clearTimeout(timer); });
 }
-window.addEventListener('pagehide', () => { clearInterval(expiryTimer); renderer.dispose(); });
+window.addEventListener('pagehide', () => { clearInterval(expiryTimer); clearTimeout(statsTimer); renderer.dispose(); });

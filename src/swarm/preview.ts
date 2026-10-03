@@ -11,7 +11,7 @@ export function swarmPreview(totalCells = 54): Swarm {
       depth: index === 0 ? 0 : Math.floor(Math.log(index * 3 + 1) / Math.log(4)), role: index === 0 ? 'coordinator' : index % 5 === 0 ? 'verifier' : index % 7 === 0 ? 'watcher' : 'developer',
       status: index % 17 === 16 ? 'retired' : 'ready', heartbeat: now,
       purpose: index === 0 ? 'Coordinate the recorded local delegation.' : `Inspect the work assigned to ${label} cell ${index}.`,
-      allocationCents: index === 0 ? 10000 : 500, budgetBasis: 'logical-allocation',
+      allocationCents: Math.floor(10000 / 4 ** (index === 0 ? 0 : Math.floor(Math.log(index * 3 + 1) / Math.log(4)))), budgetBasis: 'logical-allocation',
     }));
     const tasks = cells.length > 1 ? [{ id: 'implementation', projectId: 'flujo', branch: 'codex/sample', status: 'running' as const, owner: 'cell-1', attempt: 1, leaseExpiry: future, specDigest: digest, candidate: null, review: null },
       { id: 'retire-operation', projectId: 'flujo', branch: 'codex/sample-retire', status: 'completed' as const, owner: cells.length > 2 ? 'cell-2' : 'root', attempt: 1, leaseExpiry: null, specDigest: digest, candidate: null, review: null },

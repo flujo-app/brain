@@ -5,12 +5,34 @@ import { performance } from 'node:perf_hooks';
 import ts from 'typescript';
 const generated = new URL('../.vite/swarm-tests/', import.meta.url);
 await mkdir(generated, { recursive: true });
-for (const name of ['model', 'preview']) {
+for (const name of ['model', 'preview', 'transport']) {
   const source = await readFile(new URL(`../src/swarm/${name}.ts`, import.meta.url), 'utf8');
   await writeFile(new URL(`${name}.mjs`, generated), ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext } }).outputText);
 }
-const { parseSwarm, SwarmIndex, nodeKey, activities } = await import(new URL('model.mjs', generated));
+const { parseSwarm, SwarmIndex, nodeKey, activities, selectionFragment, selectionFromFragment } = await import(new URL('model.mjs', generated));
 const { swarmPreview } = await import(new URL('preview.mjs', generated));
+const { readSwarmJson } = await import(new URL('transport.mjs', generated));
+
+test('deep links bind a reused registry alias to its exact factory and reject ambiguous/missing authority', () => {
+  const swarm = swarmPreview(), source = swarm.sources[0], selected = { sourceId: source.id, kind: 'cell', id: 'root' };
+  const fragment = selectionFragment(source, selected);
+  assert.deepEqual(selectionFromFragment(swarm, fragment), selected);
+  assert.equal(selectionFromFragment(swarm, fragment + '&factory=another'), null);
+  assert.equal(selectionFromFragment(swarm, `source=${source.id}&kind=cell&id=root`), null);
+  source.factoryId = 'replacement-authority'; source.snapshot.factoryId = source.factoryId;
+  assert.equal(selectionFromFragment(swarm, fragment), null);
+  assert.deepEqual(selectionFromFragment(swarm, selectionFragment(source, selected)), selected);
+});
+
+test('consumer bounds streamed bytes before parsing and handles split UTF-8 without corruption', async () => {
+  const value = new TextEncoder().encode('{"label":"ø"}');
+  const response = new Response(new ReadableStream({ start(controller) { controller.enqueue(value.slice(0, 11)); controller.enqueue(value.slice(11)); controller.close(); } }));
+  assert.deepEqual(await readSwarmJson(response, value.length), { label: 'ø' });
+  let cancelled = false;
+  const oversized = new Response(new ReadableStream({ pull(controller) { controller.enqueue(new Uint8Array(64)); }, cancel() { cancelled = true; } }));
+  await assert.rejects(readSwarmJson(oversized, 32), /exceeds its bound/);
+  assert.equal(cancelled, true);
+});
 
 test('same bare root/task/effect identities remain distinct across authorities and registration is separate', () => {
   const swarm = parseSwarm(swarmPreview());
@@ -59,6 +81,20 @@ test('spatial positions survive heartbeat and recorded-status updates', () => {
   swarm.sources[0].snapshot.snapshot.tasks[0].status = 'cancelled';
   const after = new SwarmIndex(swarm);
   for (const [key, node] of before.nodes) assert.deepEqual(after.nodes.get(key).point, node.point);
+});
+
+test('large source overviews use recorded roots even when their ID is not root, and source focus shows its delegation context', () => {
+  const swarm = swarmPreview(3000), source = swarm.sources[0]; swarm.sources = [source];
+  source.snapshot.snapshot.cells[0].id = 'coordinator-alpha';
+  for (const cell of source.snapshot.snapshot.cells) if (cell.parentId === 'root') cell.parentId = 'coordinator-alpha';
+  for (const task of source.snapshot.snapshot.tasks) if (task.owner === 'root') task.owner = 'coordinator-alpha';
+  const index = new SwarmIndex(parseSwarm(swarm)), root = nodeKey(source, 'cell', 'coordinator-alpha');
+  assert.ok(index.visible(null).some(node => node.key === root));
+  assert.ok(index.visible(null).some(node => node.cell?.id === 'cell-1'));
+  const focused = index.visible(nodeKey(source, 'source', source.id));
+  assert.ok(focused.some(node => node.key === root));
+  assert.ok(focused.some(node => node.cell?.parentId === 'coordinator-alpha'));
+  assert.ok(focused.length <= 600);
 });
 test('observation freshness never renews worker evidence, and terminal states do not activate it', () => {
   const swarm = parseSwarm(swarmPreview()), source = swarm.sources[0], now = Date.parse(source.snapshot.observedAt);

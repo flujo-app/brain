@@ -75,6 +75,18 @@ export function parseSwarm(value: unknown): Swarm {
 
 export const nodeKey = (source: Pick<Source, 'id' | 'factoryId'>, kind: string, localId: string) => JSON.stringify([source.id, source.factoryId, kind, localId]);
 export const selectionKey = (source: Source, selection: Selection) => nodeKey(source, selection.kind, selection.id);
+export const selectionFragment = (source: Pick<Source, 'id' | 'factoryId'>, selection: Selection): string => new URLSearchParams({ source: source.id, factory: source.factoryId, kind: selection.kind, id: selection.id }).toString();
+/** A saved link must name the authority, not just a reusable registry alias. */
+export function selectionFromFragment(swarm: Swarm, fragment: string): Selection | null {
+  const params = new URLSearchParams(fragment.replace(/^#/, ''));
+  if (['source', 'factory', 'kind', 'id'].some(key => params.getAll(key).length !== 1)) return null;
+  const source = swarm.sources.find(source => source.id === params.get('source'));
+  if (!source || source.factoryId !== params.get('factory')) return null;
+  const kind = params.get('kind'), localId = params.get('id')!;
+  const state = source.snapshot?.snapshot;
+  const valid = kind === 'source' ? localId === source.id : kind === 'cell' ? state?.cells.some(cell => cell.id === localId) : kind === 'task' ? state?.tasks.some(task => task.id === localId) : kind === 'effect' && state?.effects.some(effect => effect.key === localId);
+  return valid ? { sourceId: source.id, kind: kind as Selection['kind'], id: localId } : null;
+}
 const hash = (value: string) => { let result = 2166136261; for (let i = 0; i < value.length; i++) result = Math.imul(result ^ value.charCodeAt(i), 16777619); return (result >>> 0) / 4294967296; };
 
 /** O(cells + tasks + effects), including expiry independent of read time. */
@@ -146,13 +158,17 @@ export class SwarmIndex {
     if (focus) {
       for (const node of this.ancestors(focus).slice(-32)) keys.add(node.key);
       const nearby = this.children.get(focus) ?? [];
-      for (const key of nearby.slice(page * 128, (page + 1) * 128)) keys.add(key);
+      const pageKeys = nearby.slice(page * 128, (page + 1) * 128);
+      for (const key of pageKeys) keys.add(key);
+      if (!this.nodes.get(focus)?.cell) for (const root of pageKeys) for (const key of (this.children.get(root) ?? []).slice(0, 12)) keys.add(key);
       const parent = this.nodes.get(focus)?.parent;
       if (parent) for (const key of (this.children.get(parent) ?? []).slice(0, 128)) keys.add(key);
     } else {
       for (const source of this.sources.values()) {
-        const root = nodeKey(source, 'cell', 'root'); if (this.nodes.has(root)) keys.add(root);
-        for (const key of (this.children.get(root) ?? []).slice(0, 12)) keys.add(key);
+        for (const root of (this.children.get(nodeKey(source, 'source', source.id)) ?? []).slice(0, 128)) {
+          keys.add(root);
+          for (const key of (this.children.get(root) ?? []).slice(0, 12)) keys.add(key);
+        }
       }
     }
     return [...keys].slice(0, limit).map(key => this.nodes.get(key)!).filter(Boolean);
