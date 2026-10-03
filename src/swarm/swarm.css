@@ -1,1 +1,72 @@
-:root{font-family:Inter,ui-sans-serif,system-ui,-apple-system,sans-serif;color:#dfeae7;background:#081216;color-scheme:dark;font-synthesis:none}*{box-sizing:border-box}body{margin:0}button,input,select{font:inherit}button,select{color:#cbded7;background:#102127;border:1px solid #2d4146;border-radius:6px}button{cursor:pointer;padding:7px 10px}button:hover,button:focus-visible{background:#19332f;border-color:#80d5b8;outline:none}button[aria-pressed=true]{color:#adf5d9;border-color:#70cbb0;background:#18352e}a{color:#9bcbbd;text-decoration:none}button:disabled{opacity:.4;cursor:default}.swarm-top{height:72px;border-bottom:1px solid #233239;display:flex;gap:24px;align-items:center;padding:0 28px}.swarm-brand{font-size:19px;color:#e0eeea;white-space:nowrap}.swarm-brand b{color:#8bdfc1}#swarm-status{font-size:12px;color:#9badab;flex:1}.read-only,.section-title{font-size:10px;letter-spacing:.14em;color:#afc3ba}.read-only{border:1px solid #344a46;border-radius:3px;padding:4px 7px}.swarm-shell{display:grid;grid-template-columns:230px minmax(0,1fr) 290px;min-height:calc(100vh - 110px)}.swarm-navigation,.swarm-inspector{padding:24px 18px;min-width:0}.swarm-navigation{border-right:1px solid #233239}.swarm-inspector{border-left:1px solid #233239;background:#0b171c}.section-title{margin-bottom:18px}.search-label{display:grid;gap:9px;font-size:11px;color:#9fb6ae}input[type=search]{width:100%;border:1px solid #30464b;border-radius:6px;padding:10px;background:#101f25;color:#ecf5f0;font-size:12px}#source-list{margin:24px 0}#source-list button,#branch-list button,#search-results button{display:block;width:100%;text-align:left;margin:6px 0;font-size:12px;overflow-wrap:anywhere}#source-list button small,#branch-list button small{display:block;margin-top:5px;color:#90a8a0;font-size:10px}#search-results{max-height:270px;overflow:auto}#search-results p{font-size:11px;color:#8caaa0}#branch-list{max-height:420px;overflow:auto}.scope-note{font-size:11px;color:#78908b;line-height:1.65;margin-top:22px}.swarm-space{min-width:0;background:radial-gradient(ellipse at 48% 42%,#18353080,transparent 53%),radial-gradient(ellipse at 73% 62%,#20334f50,transparent 50%)}.space-toolbar{padding:18px 20px;border-bottom:1px solid #203039;display:flex;flex-wrap:wrap;gap:15px;justify-content:space-between;align-items:center}#swarm-path{display:flex;flex-wrap:wrap;align-items:center;gap:5px;font-size:11px}#swarm-path button{padding:4px 7px;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.space-controls{display:flex;align-items:center;gap:12px;font-size:11px;flex-wrap:wrap}.space-controls button{font-size:11px}.space-controls select{padding:5px}.follow-control{color:#9fb8b0;display:flex;align-items:center;gap:4px}#swarm-stage{position:relative;height:max(480px,calc(100vh - 245px));min-height:400px;overflow:hidden}#swarm-canvas{display:block;width:100%;height:100%;touch-action:none}#swarm-labels{position:absolute;inset:0;pointer-events:none;overflow:hidden}.swarm-label{position:absolute;top:0;left:0;font-size:10px;color:#9bbeb1;white-space:nowrap;text-shadow:0 1px 7px #081216;max-width:160px;overflow:hidden;text-overflow:ellipsis}.swarm-label.source-label{font-size:13px;letter-spacing:.05em;color:#c5e6d8}.swarm-label.selected{color:#e0fff0}.space-caption{position:absolute;bottom:22px;left:22px;font-size:12px;color:#b0cdc1;pointer-events:none}.space-caption p{font-size:10px;color:#78968a;margin-bottom:0}.swarm-diagnostics{font-size:10px;color:#7e958c;border-top:1px solid #223239;padding:9px 20px;min-height:30px;overflow-wrap:anywhere}.swarm-timeline{padding:20px;border-top:1px solid #223239}.swarm-timeline .section-title{display:flex;gap:12px;flex-wrap:wrap}.swarm-timeline .section-title span{color:#76968b;letter-spacing:0}#tracking-list{font-size:11px;line-height:1.6;max-height:150px;overflow:auto}#tracking-list p{color:#81998f}.tracking-row{display:flex;flex-wrap:wrap;gap:12px;padding:7px 0;border-bottom:1px solid #233239}.tracking-row time{color:#809c91;font-size:10px}.swarm-inspector h2{font-size:21px;font-weight:500;line-height:1.3;overflow-wrap:anywhere}.swarm-inspector h3{font-size:13px;margin-top:26px}.swarm-inspector p{font-size:12px;color:#aec2b9;line-height:1.65;overflow-wrap:anywhere}.swarm-inspector dl{font-size:11px;display:grid;grid-template-columns:1fr;gap:6px;line-height:1.5}.swarm-inspector dt{color:#819a8e;margin-top:7px}.swarm-inspector dd{margin:0;overflow-wrap:anywhere;color:#c8dcd2}.swarm-inspector code{font-size:10px;color:#aac6b6;overflow-wrap:anywhere}.evidence-note{border:1px solid #594a30;background:#342b1b33;padding:10px;border-radius:5px;color:#dac295!important}.task-link,.effect-link{display:block;width:100%;text-align:left;font-size:11px;margin:7px 0;overflow-wrap:anywhere}.sample-notice{color:#e7c288!important}.source-state{font-size:10px;text-transform:uppercase;letter-spacing:.1em;color:#8bd4b3}footer{border-top:1px solid #233239;padding:14px 24px;color:#7c958b;font-size:10px;line-height:1.6}@media(max-width:1120px){.swarm-shell{grid-template-columns:190px minmax(0,1fr) 240px}.swarm-top{padding:0 18px;gap:15px}.swarm-navigation,.swarm-inspector{padding:20px 14px}.follow-control{display:none}}@media(max-width:800px){.swarm-shell{grid-template-columns:170px minmax(0,1fr)}.swarm-inspector{grid-column:1/-1;border-left:0;border-top:1px solid #233239;display:block}.swarm-inspector dl{grid-template-columns:130px minmax(0,1fr)}.swarm-inspector dt{margin-top:0}.swarm-top{height:auto;min-height:65px;flex-wrap:wrap;padding:15px}.read-only{margin-left:auto}#swarm-status{order:3;flex-basis:100%}#swarm-stage{height:480px}.space-controls{gap:8px}.space-controls label{font-size:10px}.space-toolbar{padding:13px}.space-caption{left:12px;font-size:11px}}@media(max-width:520px){.swarm-shell{grid-template-columns:minmax(0,1fr)}.swarm-navigation{border-right:0;border-bottom:1px solid #233239;padding:16px}#source-list{display:flex;gap:7px;margin:14px 0;overflow:auto}#source-list button{min-width:140px;max-width:190px;margin:0}#branch-list{max-height:150px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:5px}#branch-list button{margin:0}#branch-heading{margin-bottom:10px}.scope-note{margin:12px 0 0;font-size:10px}.swarm-navigation .section-title{margin-bottom:10px}#swarm-stage{height:420px}.swarm-inspector dl{grid-template-columns:110px minmax(0,1fr)}footer{padding:12px 16px}}@media(prefers-reduced-motion:reduce){*{scroll-behavior:auto!important}}
+/* THE OBSERVATORY — tokens, reset and controls.
+ * One ink, one hairline, three type voices: a serif for figures and names,
+ * a mono for labels and identities, a sans for recorded prose. Colour is
+ * evidence: the source hue is deterministic, amber is uncertainty, grey is a
+ * retained record. Nothing here animates on its own. */
+:root{
+  --void:#04060b; --ink:#070a11; --deep:#0a0f18;
+  --plate:rgba(12,17,27,.78); --plate-solid:#0b1019; --plate-lit:rgba(127,209,222,.1);
+  --rule:rgba(150,180,210,.14); --rule-strong:rgba(160,196,226,.3);
+  --text:#e9eef7; --muted:#a6b3c7; --quiet:#8995a7; --faint:#7c899d;
+  --signal:#7fd1de; --accent:#7fd1de; --warn:#e0a85c; --hist:#b4bcce;
+  --serif:ui-serif,'Iowan Old Style','Palatino Linotype',Palatino,Georgia,serif;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  --sans:Inter,ui-sans-serif,system-ui,-apple-system,'Segoe UI',sans-serif;
+  --kicker:9px/1.1 var(--mono);
+  --ease:cubic-bezier(.2,.7,.3,1);
+  font-family:var(--sans); color:var(--text); background:var(--void); color-scheme:dark; font-synthesis:none;
+  -webkit-font-smoothing:antialiased;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--void);color:var(--text);overflow-x:hidden}
+#swarm-app{position:relative;isolation:isolate}
+button,input,select{font:inherit;font-family:inherit}
+button{cursor:pointer;padding:7px 10px;border-radius:3px;background:transparent;border:1px solid var(--rule);color:var(--muted);
+  transition:color .16s var(--ease),border-color .16s var(--ease),background .16s var(--ease),transform .16s var(--ease)}
+button:hover{background:rgba(127,209,222,.07);border-color:var(--rule-strong);color:var(--text)}
+button:active{transform:translateY(.5px)}
+button[aria-pressed=true]{color:var(--text);border-color:var(--accent);background:rgba(127,209,222,.1)}
+button:disabled{opacity:.35;cursor:default}
+select,input{border-radius:3px;background:var(--plate-solid);border:1px solid var(--rule);color:var(--text)}
+button:focus-visible,input:focus-visible,select:focus-visible,canvas:focus-visible,summary:focus-visible,a:focus-visible{outline:1px solid var(--accent);outline-offset:3px;border-radius:2px}
+a{color:#a9cfdb;text-decoration:none}
+kbd{font:9px var(--mono);border:1px solid var(--rule);border-radius:2px;padding:1px 3px;color:var(--faint);margin-left:5px}
+summary{cursor:pointer}
+::selection{background:rgba(127,209,222,.28)}
+/* Hairline scrollbars so a scrolling plate still reads as one surface. */
+*{scrollbar-width:thin;scrollbar-color:rgba(160,196,226,.22) transparent}
+*::-webkit-scrollbar{width:8px;height:8px}
+*::-webkit-scrollbar-thumb{background:rgba(160,196,226,.2);border-radius:8px}
+*::-webkit-scrollbar-track{background:transparent}
+
+/* ── The O ──────────────────────────────────────────────────────────────────
+ * The mark is a mouth: the Observatory only ever speaks about records. The
+ * lips part on hover or keyboard focus — a deliberate flourish on a link, not
+ * a report of execution — and hold still under reduced motion. */
+.o-mark{display:block;color:var(--signal);overflow:visible}
+.o-mark .o-lip{transition:transform .5s var(--ease);transform-origin:32px 32px}
+.o-mark .o-core,.o-mark .o-say,.o-mark .o-bezel{transition:opacity .4s var(--ease)}
+a:hover .o-mark .o-lip-upper,a:focus-visible .o-mark .o-lip-upper{transform:translateY(-2.2px)}
+a:hover .o-mark .o-lip-lower,a:focus-visible .o-mark .o-lip-lower{transform:translateY(2.2px)}
+a:hover .o-mark .o-say,a:focus-visible .o-mark .o-say{opacity:.8}
+.o-mark[data-speaking=true]{filter:drop-shadow(0 0 10px rgba(127,209,222,.35))}
+
+/* ── Badges ─────────────────────────────────────────────────────────────── */
+.chip{display:inline-flex;align-items:center;gap:6px;font:9px/1 var(--mono);letter-spacing:.1em;text-transform:uppercase;
+  color:var(--muted);border:1px solid var(--rule);border-radius:999px;padding:5px 9px;white-space:nowrap;cursor:help}
+.chip-live{color:#bfeef5;border-color:rgba(127,209,222,.46)}
+.chip-live::before{content:'';width:5px;height:5px;border-radius:50%;background:var(--signal);box-shadow:0 0 0 3px rgba(127,209,222,.14)}
+.chip-warn{color:#e8c79a;border-color:rgba(224,168,92,.4);background:rgba(224,168,92,.07)}
+.chip-hist{color:var(--hist);border-style:dashed}
+.chip-quiet{color:var(--quiet)}
+.chip+.chip{margin-left:0}
+
+/* ── Evidence drawer: the careful wording, folded out of the reading flow ── */
+.evidence-drawer{border-top:1px solid var(--rule);margin-top:14px;padding-top:10px}
+.evidence-drawer>summary{font:9px var(--mono);letter-spacing:.16em;text-transform:uppercase;color:var(--faint);list-style:none;display:flex;align-items:center;gap:8px}
+.evidence-drawer>summary::-webkit-details-marker{display:none}
+.evidence-drawer>summary::before{content:'+';font:10px var(--mono);color:var(--quiet);border:1px solid var(--rule);border-radius:50%;width:14px;height:14px;display:grid;place-items:center}
+.evidence-drawer[open]>summary::before{content:'–'}
+.evidence-drawer>summary:hover{color:var(--muted)}
+.evidence-drawer p{font:11px/1.75 var(--sans);color:var(--quiet);margin:10px 0 0;max-width:72ch}
+@media(prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important;scroll-behavior:auto!important}}

@@ -5,14 +5,20 @@ import { performance } from 'node:perf_hooks';
 import ts from 'typescript';
 const generated = new URL('../.vite/swarm-tests/', import.meta.url);
 await mkdir(generated, { recursive: true });
-for (const name of ['model', 'preview', 'transport', 'renderer']) {
+for (const name of ['model', 'preview', 'transport', 'renderer', 'marks']) {
   const source = await readFile(new URL(`../src/swarm/${name}.ts`, import.meta.url), 'utf8');
   await writeFile(new URL(`${name}.mjs`, generated), ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext } }).outputText);
 }
 const { parseSwarm, SwarmIndex, nodeKey, activities, selectionFragment, selectionFromFragment } = await import(new URL('model.mjs', generated));
 const { swarmPreview } = await import(new URL('preview.mjs', generated));
 const { readSwarmJson } = await import(new URL('transport.mjs', generated));
-const { markerOf, activityEvidence } = await import(new URL('renderer.mjs', generated));
+const { markerOf, activityEvidence, sourceColor } = await import(new URL('renderer.mjs', generated));
+const { sourceHue: markSourceHue } = await import(new URL('marks.mjs', generated));
+
+test('the field renderer and the instrument marks read one deterministic authority palette', () => {
+  for (const source of swarmPreview().sources) assert.equal(markSourceHue(source.id), sourceColor(source.id));
+  for (const id of ['a', 'factory-9', 'another-registry-alias', '']) assert.equal(markSourceHue(id), sourceColor(id));
+});
 
 test('deep links bind a reused registry alias to its exact factory and reject ambiguous/missing authority', () => {
   const swarm = swarmPreview(), source = swarm.sources[0], selected = { sourceId: source.id, kind: 'cell', id: 'root' };
