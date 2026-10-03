@@ -4,6 +4,8 @@ import { activities, nodeKey, parseSwarm, selectionFragment, selectionFromFragme
 import { readSwarmJson } from './transport';
 import { activityEvidence, markerLegend, markerOf, markerTitle, SwarmRenderer, sourceColor, type Marker } from './renderer';
 import { swarmPreview } from './preview';
+import { mountInsights } from './insights';
+import { observatoryPreview } from './insights-preview';
 
 const $ = (id: string): HTMLElement => document.getElementById(id)!;
 const element = <T extends keyof HTMLElementTagNameMap>(tag: T, text?: string, className?: string): HTMLElementTagNameMap[T] => {
@@ -20,6 +22,7 @@ const timestamp = (value: string): string => new Intl.DateTimeFormat(undefined, 
 const taskLabel = (status: string) => status === 'completed' ? 'operation completed' : status;
 const empty = (): Swarm => ({ schemaVersion: 1, scope: 'operator-source-registry', observedAt: new Date().toISOString(), commands: false, sources: [] });
 const query = new URLSearchParams(location.search), embedded = query.get('embed') === '1', channel = query.get('channel') ?? '';
+const insights = mountInsights(next => select(next, false));
 const preview = !embedded && query.get('preview') === '1';
 let swarm = empty(), index = new SwarmIndex(swarm), selection: Selection | null = null, page = 0, frameSequence = 0, lastStats = 0;
 let renderer: SwarmRenderer;
@@ -214,7 +217,7 @@ function redraw(): void {
   const focus = focusNode(), visible = index.visible(focus?.key ?? null, page);
   renderer?.setNodes(visible, focus?.key ?? null);
   document.body.classList.toggle('has-selection', !!selection);
-  paintNavigation(); paintInspector(); paintTracking();
+  paintNavigation(); paintInspector(); paintTracking(); insights.render(swarm, selection);
   document.body.classList.toggle('field-empty', !swarm.sources.length);
   const accented = selection ? index.sources.get(selection.sourceId) : null;
   document.body.style.setProperty('--accent', accented ? sourceColor(accented.id) : '#7fd1de');
@@ -234,6 +237,7 @@ function observe(value: unknown): void {
     if (!source.snapshot || (old.snapshot && source.snapshot.revision < old.snapshot.revision)) return { ...source, snapshot: old.snapshot, status: old.snapshot ? 'stale' : 'unavailable', events: old.events };
     return source;
   });
+  insights.observe((value as { observatory?: unknown }).observatory, next);
   swarm = next; index = new SwarmIndex(next);
   if (selection && (previous.get(selection.sourceId)?.factoryId !== index.sources.get(selection.sourceId)?.factoryId || !validSelection(selection))) select(null, false);
   if (firstObservation) { const wanted = selectionHash(); if (wanted && validSelection(wanted)) selection = wanted; firstObservation = false; }
@@ -281,6 +285,7 @@ const expiryTimer = setInterval(() => {
     for (const cell of source.snapshot?.snapshot.cells ?? []) { const node = index.nodes.get(nodeKey(source, 'cell', cell.id)); if (node && node.activity !== (activity.get(cell.id) ?? 'idle')) { node.activity = activity.get(cell.id) ?? 'idle'; changed = true; } }
   }
   if (changed) redraw();
+  else insights.tick();
 }, 2000);
 
 if (embedded) {
@@ -297,7 +302,8 @@ if (embedded) {
   }
 } else if (preview) {
   const count = Number(query.get('cells') ?? 54);
-  observe(swarmPreview(Number.isSafeInteger(count) && count >= 3 && count <= 10000 ? count : 54));
+  const sample = swarmPreview(Number.isSafeInteger(count) && count >= 3 && count <= 10000 ? count : 54);
+  observe({ ...sample, observatory: observatoryPreview(sample.sources) });
 } else {
   // Same-origin registered bridge only; never accept a remote destination/token.
   const sourcePath = query.get('source') ?? '/api/factory/swarm';
