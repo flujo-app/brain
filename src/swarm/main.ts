@@ -285,6 +285,7 @@ const expiryTimer = setInterval(() => {
     for (const cell of source.snapshot?.snapshot.cells ?? []) { const node = index.nodes.get(nodeKey(source, 'cell', cell.id)); if (node && node.activity !== (activity.get(cell.id) ?? 'idle')) { node.activity = activity.get(cell.id) ?? 'idle'; changed = true; } }
   }
   if (changed) redraw();
+  else insights.tick();
 }, 2000);
 
 if (embedded) {

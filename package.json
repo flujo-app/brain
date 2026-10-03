@@ -10,7 +10,7 @@
     "standalone": "npm run build && npm install --prefix manager && npm run standalone --prefix manager",
     "release": "node scripts/release.mjs",
     "test:release": "node --test test/release-arguments.test.mjs",
-    "test:swarm": "node --test test/swarm.test.mjs test/insights.test.mjs",
+    "test:swarm": "node --test test/swarm.test.mjs test/insights.test.mjs test/insights-dom.test.mjs",
     "dockerbuild": "gh workflow run brain-release.yml -R flujo-app/brain --ref main"
   },
   "keywords": [
@@ -24,6 +24,7 @@
   "license": "MIT",
   "devDependencies": {
     "@types/three": "0.169.0",
+    "jsdom": "26.1.0",
     "typescript": "^5.5.4",
     "vite": "^5.4.0"
   },

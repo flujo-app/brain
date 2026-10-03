@@ -10,7 +10,7 @@ const key = (s: ObservationSource, w: Worker, c: Conversation) => JSON.stringify
 const empty = (): Observatory => ({ schemaVersion: 1, scope: 'factory-observatory', commands: false, observedAt: new Date().toISOString(), sources: [] });
 
 export function mountInsights(onSelect: (selection: Selection | null) => void) {
-  let swarm: Swarm, selection: Selection | null = null, detail = empty(), chosen: string | null = null, filter = '', signature = '', transcriptSignature = '', sourceSignature = '', transcriptKey: string | null = null;
+  let swarm: Swarm, selection: Selection | null = null, detail = empty(), chosen: string | null = null, filter = '', signature = '', temporalSignature = '', transcriptSignature = '', sourceSignature = '', transcriptKey: string | null = null, clock = Date.now();
   const floors = new ObservationFloors();
   const root = el('section', undefined, 'observatory-insights'); root.id = 'observatory-insights'; root.setAttribute('aria-label', 'Observatory analytics and worker detail');
   const header = el('header', undefined, 'insights-heading'), title = el('div'); title.append(el('p', 'OBSERVATORY / INSTRUMENTS', 'insight-kicker'), el('h1', 'The work, in focus.'));
@@ -35,16 +35,22 @@ export function mountInsights(onSelect: (selection: Selection | null) => void) {
   function allConversations() { return scoped().flatMap(s => s.workers.flatMap(w => w.conversations.map(c => ({ s, w, c, key: key(s, w, c) })))); }
   function currentConversation() { const list = allConversations(); return list.find(c => c.key === chosen) ?? list[0]; }
   function scopeLabel(s: ObservationSource) { return swarm.sources.find(a => a.id === s.sourceId)?.label ?? s.sourceId; }
-  function recent(observedAt: string) { const age = Date.now() - Date.parse(observedAt); return swarm.sample || (age >= 0 && age <= 15000); }
+  function recent(observedAt: string) { const age = clock - Date.parse(observedAt); return swarm.sample || (age >= 0 && age <= 15000); }
+  function timeSignature() {
+    return JSON.stringify([
+      swarm.sources.filter(s => !selection || s.id === selection.sourceId).map(s => [s.status === 'observed' && !!s.snapshot && recent(s.snapshot.observedAt), [...activities(s, clock, swarm.sample).values()].filter(a => a === 'recent').length]),
+      scoped().map(s => [s.workers.map(w => recent(w.observedAt)), s.machines.map(m => recent(m.observedAt))]),
+    ]);
+  }
   function card(label: string, value: string, note: string) { const c = el('article', undefined, 'metric-card'); c.append(el('p', label, 'insight-kicker'), el('strong', value), el('small', note)); return c; }
   function paintAnalytics() {
     const content = panels.get('analytics')!; content.replaceChildren();
     const sources = swarm.sources.filter(s => !selection || s.id === selection.sourceId), details = scoped();
     const tasks = sources.flatMap(s => s.snapshot?.snapshot.tasks ?? []), effects = sources.flatMap(s => s.snapshot?.snapshot.effects ?? []);
-    const activity = sources.flatMap(s => [...activities(s, Date.now(), swarm.sample).values()]);
+    const activity = sources.flatMap(s => [...activities(s, clock, swarm.sample).values()]);
     const conversations = allConversations(), knownTokens = conversations.filter(v => v.c.tokens !== null);
     const metrics = el('div', undefined, 'metrics-grid');
-    metrics.append(card('Sources', String(sources.length), `${sources.filter(s => s.status !== 'observed').length} stale or unavailable`),
+    metrics.append(card('Sources', String(sources.length), `${sources.filter(s => s.status !== 'observed' || !s.snapshot || !recent(s.snapshot.observedAt)).length} stale or unavailable`),
       card('Recent leased cells', String(activity.filter(a => a === 'recent').length), `${activity.length} recorded cells · host health separate`),
       card('Tasks', String(tasks.length), `${tasks.filter(t => t.status === 'running').length} running · ${tasks.filter(t => ['delivered', 'completed'].includes(t.status)).length} delivered / operation completed`),
       card('Unknown effects', String(effects.filter(e => e.state === 'unknown').length), 'External outcomes require reconciliation'),
@@ -99,7 +105,7 @@ export function mountInsights(onSelect: (selection: Selection | null) => void) {
     conversationBody.replaceChildren();
     const list = el('div', undefined, 'conversation-list');
     for (const v of allConversations().filter(v => `${v.c.title} ${v.c.id} ${v.w.label}`.toLowerCase().includes(filter.toLowerCase()))) {
-      const b = btn(v.c.title, () => { chosen = v.key; paintConversations(); paintWorkers(); }); b.setAttribute('aria-pressed', String(v.key === selected?.key)); b.append(el('small', `${v.c.status} · ${v.w.label}`)); list.append(b);
+      const b = btn(v.c.title, () => { clock = Date.now(); chosen = v.key; paintConversations(); paintWorkers(); }); b.setAttribute('aria-pressed', String(v.key === selected?.key)); b.append(el('small', `${v.c.status} · ${v.w.label}`)); list.append(b);
     }
     if (!list.childElementCount) list.append(el('p', filter ? 'No matching conversations.' : 'No accessible conversations observed.', 'insight-empty'));
     conversationBody.append(list);
@@ -140,14 +146,21 @@ export function mountInsights(onSelect: (selection: Selection | null) => void) {
       catch { detail = empty(); freshness.textContent = 'Detail observation rejected · private detail cleared'; }
     },
     render(next: Swarm, nextSelection: Selection | null) {
-      swarm = next; selection = nextSelection;
+      swarm = next; selection = nextSelection; clock = Date.now();
       const sourceStamp = JSON.stringify(next.sources.map(s => [s.id, s.factoryId, s.label]));
       if (sourceStamp !== sourceSignature) { sourceSignature = sourceStamp; sourcePicker.replaceChildren(); const all = el('option', 'All registered sources'); all.value = ''; sourcePicker.append(all); for (const s of next.sources) { const o = el('option', s.label); o.value = s.id; sourcePicker.append(o); } }
       sourcePicker.value = selection?.sourceId ?? '';
       detail.sources = detail.sources.filter(s => next.sources.some(a => a.id === s.sourceId && a.factoryId === s.factoryId));
       const selected = currentConversation(); if (chosen && !allConversations().some(v => v.key === chosen)) chosen = selected?.key ?? null;
       const sources = scoped(); freshness.textContent = `${swarm.sample ? 'Sample data / design preview' : 'Live read-only / 5-second refresh'} · ${selection ? swarm.sources.find(s => s.id === selection!.sourceId)?.label ?? 'source' : 'all registered sources'} · ${sources.length ? `detail read ${time(detail.observedAt)}` : 'worker detail unavailable'}`;
-      const stamp = JSON.stringify([swarm, detail, selection]); if (stamp !== signature) { signature = stamp; paint(); }
+      const stamp = JSON.stringify([swarm, detail, selection]), temporal = timeSignature();
+      if (stamp !== signature) { signature = stamp; temporalSignature = temporal; paint(); }
+      else if (temporal !== temporalSignature) { temporalSignature = temporal; paintAnalytics(); paintWorkers(); paintMachines(); }
+    },
+    tick() {
+      if (!swarm || !signature) return;
+      clock = Date.now(); const temporal = timeSignature();
+      if (temporal !== temporalSignature) { temporalSignature = temporal; paintAnalytics(); paintWorkers(); paintMachines(); }
     },
   };
 }
