@@ -10,6 +10,9 @@ import { AiDock } from './ui/aichat';
 import type { BrainGraph, NodeChatMessage } from './types';
 
 const VIEW_KEY = 'brain-view';
+// Brain Online supplies its authenticated observation host when serving /viewer/.
+const swarmLink = document.getElementById('swarm-link') as HTMLAnchorElement | null;
+if (swarmLink && /^\/viewer\/(?:index\.html)?$/.test(location.pathname)) swarmLink.href = '/factory/swarm';
 
 function setBadge(text: string, connected: boolean) {
   const badge = document.getElementById('source-badge');

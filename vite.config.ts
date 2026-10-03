@@ -12,6 +12,7 @@ export default defineConfig({
       input: {
         main: resolve(__dirname, 'index.html'),
         lobby: resolve(__dirname, 'lobby.html'),
+        swarm: resolve(__dirname, 'swarm.html'),
       },
     },
   },

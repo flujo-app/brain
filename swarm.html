@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><title>Brain · swarm</title><meta name="description" content="Navigate recorded FACTORY delegation across registered authorities."/></head>
+<body>
+  <div id="swarm-app">
+    <header class="swarm-top"><a href="./index.html" class="swarm-brand">brain <b>observatory</b></a><button id="swarm-explore" aria-expanded="true">Explore sources</button><span id="swarm-status" role="status">Waiting for an authorized observation</span><button id="swarm-find">Find /</button><span class="read-only">READ ONLY</span></header>
+    <main class="swarm-shell">
+      <aside class="swarm-navigation"><div class="section-title">EXPLORE THE SWARM</div><label class="search-label">Find a cell, task or effect<input id="swarm-search" type="search" placeholder="Search every registered source" autocomplete="off"/></label><div id="search-results"></div><div id="source-list"></div><div class="section-title" id="branch-heading">DELEGATION</div><div id="branch-list"></div><div id="branch-pages"></div><p class="scope-note">Registration groups sources. Lines within a source show recorded delegation.</p></aside>
+      <section class="swarm-space"><div class="space-toolbar"><nav id="swarm-path" aria-label="Swarm path"></nav><div class="space-controls"><button id="swarm-home">Whole swarm</button><label>View <select id="swarm-mode"><option value="3d">3D orbit</option><option value="2d">2D map</option></select></label><label class="follow-control"><input id="swarm-follow" type="checkbox"/> Follow active work</label></div></div><div id="swarm-stage"><canvas id="swarm-canvas" tabindex="0" aria-label="Spatial swarm. Use the navigation buttons to select cells; Home fits the whole swarm."></canvas><div id="swarm-labels" aria-hidden="true"></div><div class="space-caption"><div class="observatory-title">A wider mind.</div><span id="swarm-counts"></span><p>Orbit the recorded world. Enter a source. Follow its work.</p></div></div><details class="swarm-timeline"><summary class="section-title">LIVE TRACKING <span id="tracking-scope"></span></summary><div id="tracking-list"></div></details><details class="swarm-measurements"><summary>Rendering details</summary><div id="swarm-diagnostics" class="swarm-diagnostics" aria-label="Rendering measurements"></div></details></section>
+      <aside class="swarm-inspector" aria-label="Selected swarm evidence"><div class="section-title">EVIDENCE <button id="swarm-close" aria-label="Close evidence">×</button></div><div id="swarm-inspect"></div></aside>
+    </main>
+    <footer>FACTORY owns execution and recovery. Recorded activity does not establish host health. Worker quiescence: unverified.</footer>
+  </div>
+  <script type="module" src="/src/swarm/main.ts"></script>
+</body></html>
