@@ -1,6 +1,6 @@
 # Observatory instruments
 
-The expanded instruments below the spatial field provide analytics, a timestamped timeline, FLUJO worker nodes, conversations with tool calls/results, and separate Modal/Fly inventory. The sticky navigation jumps between sections and filters them by registered authority. Conversations open at the newest message; refresh preserves a reader's position and expanded tool calls when the transcript is unchanged.
+The expanded instruments below the spatial field provide analytics, a timestamped timeline, FLUJO worker nodes, conversations with tool calls/results, and separate Modal/Fly inventory. The sticky navigation jumps between sections; the scope picker filters them by registered authority. Section navigation preserves the authority URL fragment. Conversations open at the newest message; refresh preserves a reader's position and expanded tool calls when the transcript is unchanged.
 
 The two-second expiry tick refreshes time-sensitive analytics and worker/provider freshness when their effective evidence changes, even without a new transport frame or changed data object. One captured clock drives the panels. Lease expiry and the 15-second freshness boundary invalidate these panels without rebuilding the timeline or transcript, preserving scroll and tool expansion. Repeated ticks with unchanged evidence do not repaint.
 
@@ -13,3 +13,13 @@ Worker registration is a grouping mechanism. Null cell/machine bindings remain v
 Detail bounds are 32 sources, 128 resources/source, 16 workers/source, 12 conversations/worker, 100 display messages/conversation, 512 nodes/flow, and 2,048 edges/flow. Message/tool-argument shortening is explicitly marked. Private conversation access failures erase transcripts and topology. Controller history starts with the current connection's cursor; snapshots do not reconstruct earlier controller events.
 
 Validation: `npm run build` and `npm run test:swarm` include namespace, graph-binding, private-field, transcript-denial, byte/window and unknown-spend checks, alongside the existing 10,000-cell and renderer evidence qualification. A JSDOM regression runs the actual instrument module through lease expiry with the same observation objects, then worker/provider freshness expiry on an idle tick; it verifies transcript/timeline identity, scroll and tool expansion are preserved.
+
+## O visual redesign
+
+The O is a mouth. Its SVG mark shares the field's deterministic authority palette. The visual language combines serif readings, monospace identities, glass surfaces, measured rules and a numbered section spine. All five observation sections remain expanded. Tool calls, operation receipts and evidence digests start expanded; longer interpretation notes live in Evidence drawers.
+
+The dial shows counted recent leases, the budget rule shows recorded paid holds, the timeline ribbon shows record density in three separate provenance lanes, and flow diagrams show recorded nodes and edges. These marks do not introduce health, inferred execution, reconstructed history or new controls. Node tooltips and the accessible graph description preserve full labels, types and identities. Cyclic or disconnected definitions retain every node within the SVG bounds. Completed operations remain separate from delivered software in the task reading.
+
+The requested FLUJO flow `6b0b98fd-aa5a-4d8a-bdf5-510bb70a7e03` (`Claude_Opus_Agent`) authored the presentation candidate in conversation `c46dc824-9cc3-45a8-9c19-eabab529f9d8`. Parent review repaired section navigation, task-status labels, graph bounds, receipt expansion and responsive readings before acceptance. The flow definition was not changed.
+
+The redesign builds successfully and passes 20 viewer checks. Browser qualification covers source-preserving navigation, the actual two registered FLUJO conversations (including the design run's six-node graph and 100/135-message window), the recorded $100 held/$0 available/incomplete paid ledger, expanded historical Modal/Fly receipts, and a 390px viewport without page overflow. The private local qualification harness is separate from shipped source; release and runtime adoption remain the host owner's responsibility. The shared observation schema, transport, source parsing, server redaction and read budgets are unchanged.
