@@ -54,6 +54,21 @@ test('same bare root/task/effect identities remain distinct across authorities a
     assert.equal(index.nodeFor({ sourceId: source.id, kind: 'task', id: 'exploration' }).source.id, source.id);
   }
 });
+test('current FACTORY steering, cancellation and worker power effects remain observable', () => {
+  for (const [kind, state, scope] of [
+    ['message', 'succeeded', 'task'], ['flow_cancel', 'cancelled', 'task'],
+    ['worker_wake', 'succeeded', 'worker'], ['worker_sleep', 'unknown', 'worker'],
+  ]) {
+    const swarm = swarmPreview();
+    const effect = swarm.sources[2].snapshot.snapshot.effects[0];
+    Object.assign(effect, { kind, state, scope });
+    const parsed = parseSwarm(swarm).sources[2].snapshot.snapshot.effects[0];
+    assert.deepEqual([parsed.kind, parsed.state, parsed.scope], [kind, state, scope]);
+  }
+  const unsupported = swarmPreview();
+  unsupported.sources[2].snapshot.snapshot.effects[0].kind = 'arbitrary_command';
+  assert.throws(() => parseSwarm(unsupported), /Unsupported observation value/);
+});
 test('10,000-level delegation can be indexed, searched, selected and drawn without recursive overflow or losing focus', () => {
   const swarm = swarmPreview(10000), source = swarm.sources[0];
   swarm.sources = [source];

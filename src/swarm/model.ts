@@ -2,7 +2,7 @@
  * No provider locations, credentials, commands or arbitrary navigation URLs. */
 export interface Cell { id: string; parentId: string | null; depth: number; role: 'coordinator' | 'developer' | 'verifier' | 'watcher'; status: 'reserved' | 'ready' | 'retired'; purpose: string; heartbeat: string; allocationCents: number; budgetBasis: 'logical-allocation' }
 export interface Task { id: string; projectId: string; branch: string; status: 'ready' | 'running' | 'review' | 'verified' | 'delivered' | 'rejected' | 'completed' | 'cancelled'; owner: string | null; attempt: number; leaseExpiry: string | null; specDigest: string; candidate: { sha256: string } | null; review: { accepted: boolean; reviewerId: string; evidenceDigest: string; candidateDigest: string; specDigest: string; attempt: number } | null }
-export interface Effect { key: string; kind: 'provision' | 'flow_call' | 'retire' | 'delivery'; state: 'accepted' | 'running' | 'unknown' | 'succeeded' | 'not_applied'; owner: string; taskId: string | null; scope: string; scopeId: string; ownerEpoch: number; controlEpoch: number; createdAt: string; updatedAt: string; requestDigest: string }
+export interface Effect { key: string; kind: 'provision' | 'flow_call' | 'message' | 'flow_cancel' | 'retire' | 'delivery' | 'worker_wake' | 'worker_sleep'; state: 'accepted' | 'running' | 'unknown' | 'succeeded' | 'cancelled' | 'not_applied'; owner: string; taskId: string | null; scope: 'task' | 'project' | 'cleanup' | 'worker'; scopeId: string; ownerEpoch: number; controlEpoch: number; createdAt: string; updatedAt: string; requestDigest: string }
 export interface Change { seq: number; type: string; subject: string; observedAt: string }
 export interface Snapshot {
   schemaVersion: 1; factoryId: string; revision: number; cursor: string; observedAt: string; scope: 'local-coordinator'; buildRevision: string;
@@ -54,8 +54,8 @@ export function parseSwarm(value: unknown): Swarm {
       });
       const effects = array(state.effects, 10000).map(value => {
         const effect = record(value);
-        return { key: id(effect.key), kind: choice(effect.kind, ['provision', 'flow_call', 'retire', 'delivery']), state: choice(effect.state, ['accepted', 'running', 'unknown', 'succeeded', 'not_applied']),
-          owner: id(effect.owner), taskId: optionalId(effect.taskId), scope: choice(effect.scope, ['task', 'project', 'cleanup']), scopeId: id(effect.scopeId),
+        return { key: id(effect.key), kind: choice(effect.kind, ['provision', 'flow_call', 'message', 'flow_cancel', 'retire', 'delivery', 'worker_wake', 'worker_sleep']), state: choice(effect.state, ['accepted', 'running', 'unknown', 'succeeded', 'cancelled', 'not_applied']),
+          owner: id(effect.owner), taskId: optionalId(effect.taskId), scope: choice(effect.scope, ['task', 'project', 'cleanup', 'worker']), scopeId: id(effect.scopeId),
           ownerEpoch: num(effect.ownerEpoch), controlEpoch: num(effect.controlEpoch), createdAt: date(effect.createdAt), updatedAt: date(effect.updatedAt), requestDigest: digest(effect.requestDigest) };
       });
       unique(cells.map(cell => cell.id)); unique(tasks.map(task => task.id)); unique(effects.map(effect => effect.key));
