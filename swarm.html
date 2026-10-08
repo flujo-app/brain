@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><title>O · Observatory</title><meta name="description" content="Navigate recorded FACTORY delegation across registered authorities."/><meta name="color-scheme" content="dark"/></head>
+<body>
+  <div id="swarm-app">
+    <header class="swarm-top">
+      <a href="./index.html" class="swarm-brand"><span class="brand-mark" id="brand-mark" aria-hidden="true"></span><span class="brand-word">O <b>Observatory</b></span></a>
+      <button id="swarm-explore" aria-expanded="true" title="Show or hide the atlas rail">Atlas</button>
+      <button id="swarm-find" title="Search every registered source">Find <kbd>/</kbd></button>
+      <span id="swarm-status" role="status">Waiting for an authorized observation</span>
+      <span class="read-only" title="This viewer reads recorded observations. It cannot start, stop or resume any worker.">READ ONLY</span>
+    </header>
+    <main class="swarm-shell">
+      <aside class="swarm-navigation" aria-label="Swarm atlas">
+        <label class="search-label"><span>Find a cell, task or effect</span><input id="swarm-search" type="search" placeholder="Search every registered source" autocomplete="off"/></label>
+        <div id="search-results"></div>
+        <div class="rail-heading"><span class="section-title">AUTHORITIES</span></div>
+        <div id="source-list"></div>
+        <div class="rail-heading"><span class="section-title" id="branch-heading">DELEGATION</span></div>
+        <div id="branch-list"></div>
+        <div id="branch-pages"></div>
+        <p class="scope-note" title="Registration groups sources. Lines within a source show recorded delegation. Reference rings are decorative and are not authority edges.">Lines are recorded delegation · rings are decorative</p>
+      </aside>
+      <section class="swarm-space">
+        <div class="field-backdrop" aria-hidden="true"><span class="field-nebula"></span><span class="field-dust"></span><span class="field-horizon"></span><span class="field-grid"></span><span class="field-vignette"></span></div>
+        <div class="space-toolbar">
+          <nav id="swarm-path" aria-label="Swarm path"></nav>
+          <div class="space-controls">
+            <button id="swarm-home">Whole swarm</button>
+            <label class="control-field"><span>View</span><select id="swarm-mode"><option value="3d">3D orbit</option><option value="2d">2D map</option></select></label>
+            <label class="follow-control"><input id="swarm-follow" type="checkbox"/><span>Follow active work</span></label>
+          </div>
+        </div>
+        <div id="swarm-stage">
+          <canvas id="swarm-canvas" tabindex="0" aria-label="Spatial swarm. Use the navigation buttons to select cells; Home fits the whole swarm."></canvas>
+          <div id="swarm-labels" aria-hidden="true"></div>
+          <div class="space-caption">
+            <p class="caption-kicker">RECORDED FACTORY SPACE</p>
+            <div id="swarm-counts" class="field-counts"></div>
+            <ul class="field-legend" aria-label="Marker guide">
+              <li title="Registered authority plate — not worker activity"><i class="marker" data-marker="plate" aria-hidden="true"></i>authority</li>
+              <li title="Observed record — no running lease"><i class="marker" data-marker="idle" aria-hidden="true"></i>idle</li>
+              <li title="Running lease — recent heartbeat recorded"><i class="marker" data-marker="recent" aria-hidden="true"></i>leased</li>
+              <li title="Running-work evidence unconfirmed, or an owned outcome is unknown"><i class="marker" data-marker="uncertain" aria-hidden="true"></i>uncertain</li>
+              <li title="Retained record — retired, reserved or stale"><i class="marker" data-marker="quiet" aria-hidden="true"></i>retained</li>
+            </ul>
+            <p class="legend-note">shapes report records, never host health</p>
+          </div>
+        </div>
+        <details class="swarm-timeline"><summary class="section-title">TRACKING <span id="tracking-scope"></span></summary><div id="tracking-list"></div></details>
+        <details class="swarm-measurements"><summary>Rendering</summary><div id="swarm-diagnostics" class="swarm-diagnostics" aria-label="Rendering measurements"></div></details>
+      </section>
+      <aside class="swarm-inspector" aria-label="Selected swarm evidence"><div class="section-title">EVIDENCE <button id="swarm-close" aria-label="Close evidence">×</button></div><div id="swarm-inspect"></div></aside>
+    </main>
+    <footer><span class="foot-o" aria-hidden="true"></span><span>FACTORY owns execution</span><span>records, not host health</span><span>worker quiescence <b>unverified</b></span></footer>
+  </div>
+  <script type="module" src="/src/swarm/main.ts"></script>
+</body></html>

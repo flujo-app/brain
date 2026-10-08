@@ -1,0 +1,72 @@
+/* THE OBSERVATORY — tokens, reset and controls.
+ * One ink, one hairline, three type voices: a serif for figures and names,
+ * a mono for labels and identities, a sans for recorded prose. Colour is
+ * evidence: the source hue is deterministic, amber is uncertainty, grey is a
+ * retained record. Nothing here animates on its own. */
+:root{
+  --void:#04060b; --ink:#070a11; --deep:#0a0f18;
+  --plate:rgba(12,17,27,.78); --plate-solid:#0b1019; --plate-lit:rgba(127,209,222,.1);
+  --rule:rgba(150,180,210,.14); --rule-strong:rgba(160,196,226,.3);
+  --text:#e9eef7; --muted:#a6b3c7; --quiet:#8995a7; --faint:#7c899d;
+  --signal:#7fd1de; --accent:#7fd1de; --warn:#e0a85c; --hist:#b4bcce;
+  --serif:ui-serif,'Iowan Old Style','Palatino Linotype',Palatino,Georgia,serif;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  --sans:Inter,ui-sans-serif,system-ui,-apple-system,'Segoe UI',sans-serif;
+  --kicker:9px/1.1 var(--mono);
+  --ease:cubic-bezier(.2,.7,.3,1);
+  font-family:var(--sans); color:var(--text); background:var(--void); color-scheme:dark; font-synthesis:none;
+  -webkit-font-smoothing:antialiased;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--void);color:var(--text);overflow-x:hidden}
+#swarm-app{position:relative;isolation:isolate}
+button,input,select{font:inherit;font-family:inherit}
+button{cursor:pointer;padding:7px 10px;border-radius:3px;background:transparent;border:1px solid var(--rule);color:var(--muted);
+  transition:color .16s var(--ease),border-color .16s var(--ease),background .16s var(--ease),transform .16s var(--ease)}
+button:hover{background:rgba(127,209,222,.07);border-color:var(--rule-strong);color:var(--text)}
+button:active{transform:translateY(.5px)}
+button[aria-pressed=true]{color:var(--text);border-color:var(--accent);background:rgba(127,209,222,.1)}
+button:disabled{opacity:.35;cursor:default}
+select,input{border-radius:3px;background:var(--plate-solid);border:1px solid var(--rule);color:var(--text)}
+button:focus-visible,input:focus-visible,select:focus-visible,canvas:focus-visible,summary:focus-visible,a:focus-visible{outline:1px solid var(--accent);outline-offset:3px;border-radius:2px}
+a{color:#a9cfdb;text-decoration:none}
+kbd{font:9px var(--mono);border:1px solid var(--rule);border-radius:2px;padding:1px 3px;color:var(--faint);margin-left:5px}
+summary{cursor:pointer}
+::selection{background:rgba(127,209,222,.28)}
+/* Hairline scrollbars so a scrolling plate still reads as one surface. */
+*{scrollbar-width:thin;scrollbar-color:rgba(160,196,226,.22) transparent}
+*::-webkit-scrollbar{width:8px;height:8px}
+*::-webkit-scrollbar-thumb{background:rgba(160,196,226,.2);border-radius:8px}
+*::-webkit-scrollbar-track{background:transparent}
+
+/* ── The O ──────────────────────────────────────────────────────────────────
+ * The mark is a mouth: the Observatory only ever speaks about records. The
+ * lips part on hover or keyboard focus — a deliberate flourish on a link, not
+ * a report of execution — and hold still under reduced motion. */
+.o-mark{display:block;color:var(--signal);overflow:visible}
+.o-mark .o-lip{transition:transform .5s var(--ease);transform-origin:32px 32px}
+.o-mark .o-core,.o-mark .o-say,.o-mark .o-bezel{transition:opacity .4s var(--ease)}
+a:hover .o-mark .o-lip-upper,a:focus-visible .o-mark .o-lip-upper{transform:translateY(-2.2px)}
+a:hover .o-mark .o-lip-lower,a:focus-visible .o-mark .o-lip-lower{transform:translateY(2.2px)}
+a:hover .o-mark .o-say,a:focus-visible .o-mark .o-say{opacity:.8}
+.o-mark[data-speaking=true]{filter:drop-shadow(0 0 10px rgba(127,209,222,.35))}
+
+/* ── Badges ─────────────────────────────────────────────────────────────── */
+.chip{display:inline-flex;align-items:center;gap:6px;font:9px/1 var(--mono);letter-spacing:.1em;text-transform:uppercase;
+  color:var(--muted);border:1px solid var(--rule);border-radius:999px;padding:5px 9px;white-space:nowrap;cursor:help}
+.chip-live{color:#bfeef5;border-color:rgba(127,209,222,.46)}
+.chip-live::before{content:'';width:5px;height:5px;border-radius:50%;background:var(--signal);box-shadow:0 0 0 3px rgba(127,209,222,.14)}
+.chip-warn{color:#e8c79a;border-color:rgba(224,168,92,.4);background:rgba(224,168,92,.07)}
+.chip-hist{color:var(--hist);border-style:dashed}
+.chip-quiet{color:var(--quiet)}
+.chip+.chip{margin-left:0}
+
+/* ── Evidence drawer: the careful wording, folded out of the reading flow ── */
+.evidence-drawer{border-top:1px solid var(--rule);margin-top:14px;padding-top:10px}
+.evidence-drawer>summary{font:9px var(--mono);letter-spacing:.16em;text-transform:uppercase;color:var(--faint);list-style:none;display:flex;align-items:center;gap:8px}
+.evidence-drawer>summary::-webkit-details-marker{display:none}
+.evidence-drawer>summary::before{content:'+';font:10px var(--mono);color:var(--quiet);border:1px solid var(--rule);border-radius:50%;width:14px;height:14px;display:grid;place-items:center}
+.evidence-drawer[open]>summary::before{content:'–'}
+.evidence-drawer>summary:hover{color:var(--muted)}
+.evidence-drawer p{font:11px/1.75 var(--sans);color:var(--quiet);margin:10px 0 0;max-width:72ch}
+@media(prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important;scroll-behavior:auto!important}}
